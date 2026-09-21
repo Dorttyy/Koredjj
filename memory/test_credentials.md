@@ -7,6 +7,7 @@ Backend restored 2026-09-21 on fresh fork (local Mongo, DB `linguaconnect`).
 |---|---|---|---|
 | QA1 | qa_mello_1@linguatest.com | Mello1234! | created via /api/auth/register; profile completed (en→es) |
 | QA Test (2026-09-21) | qa_test_a3628ba9@linguatest.com | Test1234! | created during backend regression testing |
+| QA Test (2026-09-21 auth fix) | qa_test_5e44a05c@linguatest.com | Test1234! | created during auth endpoint verification after .env restore |
 | Demo users (seed.py) | demo@demo.com and 8 others | Demo1234! | run `python backend/seed.py` (idempotent) |
 | Admin console | admin@lingua.app | Admin1234! | web route /admin-x7k2p9 ; seeded at startup |
 

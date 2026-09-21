@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime
 
 # Backend URL from review request
-BASE_URL = "https://apk-deployment-6.preview.emergentagent.com/api"
+BASE_URL = "https://a262db76-d3a4-4af7-b8eb-159ac940d21b.preview.emergentagent.com/api"
 
 # Test credentials from memory/test_credentials.md
 QA1_EMAIL = "qa_mello_1@linguatest.com"
@@ -99,19 +99,49 @@ def test_register_new_user():
         return False
 
 def test_register_duplicate_email():
-    """Test: POST /auth/register with duplicate email -> 4xx"""
+    """Test: POST /auth/register with duplicate email -> 400"""
     try:
+        # Use the newly created user's email to test duplicate
         response = requests.post(
             f"{BASE_URL}/auth/register",
-            json={"email": QA1_EMAIL, "password": "Test1234!", "name": "Duplicate"},
+            json={"email": test_state["new_user_email"], "password": "Test1234!", "name": "Duplicate"},
             timeout=10
         )
-        passed = 400 <= response.status_code < 500
+        passed = response.status_code == 400
         print_test("POST /auth/register (duplicate email)", passed, 
-                  f"Status: {response.status_code} (expected 4xx)")
+                  f"Status: {response.status_code} (expected 400)")
         return passed
     except Exception as e:
         print_test("POST /auth/register (duplicate email)", False, f"Error: {str(e)}")
+        return False
+
+def test_login_demo():
+    """Test: POST /auth/login for demo@demo.com (seeded user)"""
+    try:
+        response = requests.post(
+            f"{BASE_URL}/auth/login",
+            json={"email": "demo@demo.com", "password": "Demo1234!"},
+            timeout=10
+        )
+        passed = response.status_code == 200
+        if passed:
+            data = response.json()
+            # Check response has 'token' key
+            if "token" in data:
+                test_state["qa1_token"] = data["token"]
+                test_state["qa1_user_id"] = data.get("user", {}).get("id")
+                print_test("POST /auth/login (demo@demo.com)", True, 
+                          f"User ID: {test_state['qa1_user_id']}, token key: ✓")
+            else:
+                print_test("POST /auth/login (demo@demo.com)", False, 
+                          f"Response missing 'token' key. Keys: {list(data.keys())}")
+                return False
+        else:
+            print_test("POST /auth/login (demo@demo.com)", False, 
+                      f"Status: {response.status_code}, Response: {response.text}")
+        return passed
+    except Exception as e:
+        print_test("POST /auth/login (demo@demo.com)", False, f"Error: {str(e)}")
         return False
 
 def test_login_qa1():
@@ -127,10 +157,9 @@ def test_login_qa1():
             data = response.json()
             # Check response has 'token' key
             if "token" in data:
-                test_state["qa1_token"] = data["token"]
-                test_state["qa1_user_id"] = data.get("user", {}).get("id")
+                # Don't overwrite demo token, store separately
                 print_test("POST /auth/login (QA1)", True, 
-                          f"User ID: {test_state['qa1_user_id']}, token key: ✓")
+                          f"User ID: {data.get('user', {}).get('id')}, token key: ✓")
             else:
                 print_test("POST /auth/login (QA1)", False, 
                           f"Response missing 'token' key. Keys: {list(data.keys())}")
@@ -148,7 +177,7 @@ def test_login_wrong_password():
     try:
         response = requests.post(
             f"{BASE_URL}/auth/login",
-            json={"email": QA1_EMAIL, "password": "WrongPassword123!"},
+            json={"email": "demo@demo.com", "password": "WrongPassword123!"},
             timeout=10
         )
         passed = response.status_code == 401
@@ -748,57 +777,32 @@ def test_websocket_connection():
 def main():
     """Run all backend regression tests"""
     print("\n" + "=" * 80)
-    print("MELLO BACKEND FRESH-DB REGRESSION TESTING")
+    print("MELLO BACKEND AUTH VERIFICATION (BUG FIX: 'Can't reach the server')")
     print("Backend URL:", BASE_URL)
     print("=" * 80)
     
-    # 1. AUTH TESTS
-    print_section("1. AUTH TESTS (Email/Password)")
+    # 1. AUTH TESTS (PRIMARY FOCUS)
+    print_section("1. AUTH TESTS (Email/Password) - PRIMARY FOCUS")
     test_api_health()
     test_register_new_user()
     test_register_duplicate_email()
-    test_login_qa1()
+    test_login_demo()
     test_login_wrong_password()
     test_auth_me_with_token()
     test_auth_me_without_token()
     
-    # Try to login QA2, if it fails, skip QA2-dependent tests
-    qa2_exists = test_login_qa2()
-    
-    # 2. EMERGENT GOOGLE SESSION EXCHANGE CONTRACT TESTS
-    print_section("2. EMERGENT GOOGLE SESSION EXCHANGE CONTRACT (Negative Tests)")
+    # 2. EMERGENT GOOGLE SESSION EXCHANGE CONTRACT TESTS (OPTIONAL NEGATIVE TESTS)
+    print_section("2. EMERGENT GOOGLE SESSION EXCHANGE CONTRACT (Optional Negative Tests)")
     test_google_session_empty_string()
     test_google_session_bogus_id()
     test_google_session_missing_field()
     test_google_alias_bogus_id()
     test_google_session_jwt_looking_string()
     
-    # 3. USERS TESTS (SMOKE)
-    print_section("3. USERS TESTS (Smoke)")
-    test_update_qa1_profile()
-    if qa2_exists:
-        test_update_qa2_profile()
+    # 3. LIGHT SMOKE TESTS
+    print_section("3. LIGHT SMOKE TESTS")
     test_get_partners()
-    if qa2_exists:
-        test_get_user_by_id()
-    
-    # 4. CHATS TESTS (SMOKE)
-    print_section("4. CHATS TESTS (Smoke)")
-    if qa2_exists:
-        test_create_conversation()
-        test_send_text_message()
-    test_list_conversations()
-    if qa2_exists and test_state.get("conversation_id"):
-        test_get_conversation_messages()
-    
-    # 5. MOMENTS TESTS (SMOKE)
-    print_section("5. MOMENTS TESTS (Smoke)")
     test_list_moments()
-    if qa2_exists:
-        test_create_moment()
-        if test_state.get("moment_id"):
-            test_like_moment()
-            test_comment_on_moment()
     
     # SUMMARY
     print("\n" + "=" * 80)
@@ -810,14 +814,14 @@ def main():
     print(f"Failed: {total - passed}/{total}")
     
     if passed == total:
-        print("\n✅ ALL TESTS PASSED - Backend core flows working correctly")
+        print("\n✅ ALL TESTS PASSED - Backend auth endpoints healthy after .env restore")
     else:
         print(f"\n❌ {total - passed} TEST(S) FAILED - Review failures above")
     
     # Save test credentials to memory file
     if test_state["new_user_email"]:
-        print(f"\n📝 New test user created: {test_state['new_user_email']}")
-        print("   (Credentials should be recorded in memory/test_credentials.md)")
+        print(f"\n📝 New test user created: {test_state['new_user_email']} / Test1234!")
+        print("   (Should be recorded in memory/test_credentials.md)")
     
     return passed == total
 
