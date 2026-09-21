@@ -17,7 +17,7 @@ import uuid
 import pytest
 import requests
 
-BASE = os.environ.get("EXPO_BACKEND_URL", "https://auth-fix-166.preview.emergentagent.com").rstrip("/") + "/api"
+BASE = os.environ.get("EXPO_BACKEND_URL", "https://apk-deployment-6.preview.emergentagent.com").rstrip("/") + "/api"
 
 MEI = ("mei@demo.com", "Demo1234!")
 DIEGO = ("diego@demo.com", "Demo1234!")

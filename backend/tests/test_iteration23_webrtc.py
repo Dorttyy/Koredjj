@@ -4,7 +4,7 @@ import os
 import pytest
 import requests
 
-BASE_URL = os.environ.get("EXPO_BACKEND_URL", "https://auth-fix-166.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("EXPO_BACKEND_URL", "https://apk-deployment-6.preview.emergentagent.com").rstrip("/")
 API = f"{BASE_URL}/api"
 PASSWORD = "Demo1234!"
 

@@ -14,7 +14,7 @@ import websocket
 import threading
 
 # Backend URL
-BASE_URL = "https://auth-fix-166.preview.emergentagent.com/api"
+BASE_URL = "https://apk-deployment-6.preview.emergentagent.com/api"
 
 # Test credentials
 MEI_EMAIL = "mei@demo.com"

@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime
 
 # Backend URL from review request
-BASE_URL = "https://91731875-76bb-449f-83fb-545f3bd467ed.preview.emergentagent.com/api"
+BASE_URL = "https://apk-deployment-6.preview.emergentagent.com/api"
 
 # Test credentials from memory/test_credentials.md
 QA1_EMAIL = "qa_mello_1@linguatest.com"

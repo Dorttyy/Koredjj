@@ -17,7 +17,7 @@ import os
 import sys
 from playwright.async_api import async_playwright
 
-BASE = "https://auth-fix-166.preview.emergentagent.com"
+BASE = "https://apk-deployment-6.preview.emergentagent.com"
 EMAIL = "mei@demo.com"
 PASSWORD = "Demo1234!"
 

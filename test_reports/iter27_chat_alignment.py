@@ -14,7 +14,7 @@ We measure with page.evaluate and log the results.
 """
 import asyncio, json, os, statistics
 
-BASE = "https://auth-fix-166.preview.emergentagent.com"
+BASE = "https://apk-deployment-6.preview.emergentagent.com"
 CONV = "dc1cf7d7-2f98-43dc-8a15-07b8ff742e03"
 
 async def run(page):

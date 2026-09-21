@@ -4,7 +4,7 @@ import asyncio
 from playwright.async_api import async_playwright
 import requests
 
-BASE = "https://auth-fix-166.preview.emergentagent.com"
+BASE = "https://apk-deployment-6.preview.emergentagent.com"
 FAKE_ARGS = [
     "--use-fake-device-for-media-stream",
     "--use-fake-ui-for-media-stream",
