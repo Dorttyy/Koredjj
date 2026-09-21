@@ -87,6 +87,8 @@ credentials.json
 
 # Metro bundler cache
 frontend/.metro-cache/
-.env
-.env.*
-*.env
+# NOTE: .env files are intentionally TRACKED so the deployment pipeline can
+# read/update them (EXPO_PUBLIC_BACKEND_URL, MONGO_URL, etc.). Do NOT re-add
+# blanket .env ignores here or a fork/deploy will lose them again.
+.env.local
+.env.*.local

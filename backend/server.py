@@ -341,10 +341,23 @@ for router in (
 ):
     app.include_router(router, prefix="/api")
 
+_cors_origins = os.environ.get("CORS_ORIGINS", "*").strip()
+# When allowing any origin together with credentials, the CORS spec forbids the
+# literal "*" in Access-Control-Allow-Origin — the server MUST echo the exact
+# request Origin. Starlette does this correctly via allow_origin_regex, but NOT
+# via allow_origins=["*"] (which emits "*" + Allow-Credentials:true on actual
+# responses and gets blocked by browsers on cross-origin/deployed setups).
+if _cors_origins == "*":
+    _cors_origin_kwargs = {"allow_origin_regex": ".*"}
+else:
+    _cors_origin_kwargs = {
+        "allow_origins": [o.strip() for o in _cors_origins.split(",") if o.strip()]
+    }
+
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","),
     allow_methods=["*"],
     allow_headers=["*"],
+    **_cors_origin_kwargs,
 )

@@ -37,11 +37,29 @@ async function request<T>(
   if (!API_URL) {
     throw new Error("Account services are unavailable right now. Please try again shortly.");
   }
+  // Hard network timeout so a stalled connection (common on flaky mobile
+  // networks / unreachable host) can NEVER leave the UI hanging forever on a
+  // spinner. Without this, fetch() waits indefinitely. On timeout we surface a
+  // clear, retryable "can't reach the server" error instead of an infinite
+  // loading state (e.g. the onboarding "Start Connecting" button).
+  const REQUEST_TIMEOUT_MS = 20000;
+  const controller = new AbortController();
+  const external = options?.signal;
+  const onExternalAbort = () => controller.abort();
+  if (external) {
+    if (external.aborted) controller.abort();
+    else external.addEventListener("abort", onExternalAbort, { once: true });
+  }
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, REQUEST_TIMEOUT_MS);
   let res: Response;
   try {
     res = await fetch(`${API_URL}/api${path}`, {
       method,
-      signal: options?.signal,
+      signal: controller.signal,
       headers: {
         "Content-Type": "application/json",
         ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
@@ -49,10 +67,18 @@ async function request<T>(
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
   } catch (err) {
-    // Fetch throws only for network-level failures (DNS, offline, CORS).
-    // Signal the NetworkProvider and rethrow so callers can still react.
-    if (!options?.signal?.aborted) netFailureReporter();
+    // Fetch throws only for network-level failures (DNS, offline, CORS) or an
+    // abort (our timeout, or the caller's own signal).
+    // Caller-initiated cancellation should propagate quietly; our timeout and
+    // real network errors should flip the offline indicator.
+    if (!external?.aborted) netFailureReporter();
+    if (timedOut) {
+      throw new Error("Can't reach the server. Check your connection.");
+    }
     throw err instanceof Error ? err : new Error("Network request failed");
+  } finally {
+    clearTimeout(timer);
+    if (external) external.removeEventListener("abort", onExternalAbort);
   }
   // Server reachable — clear any lingering offline state.
   netSuccessReporter();

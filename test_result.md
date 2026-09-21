@@ -102,6 +102,59 @@
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
 
+## CURRENT (2026-09-21 EVENING) — APK "can't reach server / stuck on onboarding" fixes: request timeout + CORS spec-fix + deployment config
+user_problem_statement: "User (Bengali, on real Android APK): login sometimes works but app gets STUCK on the last onboarding step ('What do you love?') with the Continue button spinning forever; earlier saw 'Can't reach the server' on login. Web preview works perfectly. Make the published APK reliably reach the backend."
+backend:
+  - task: "CORS spec compliance — actual (non-preflight) responses returned Access-Control-Allow-Origin:* together with Access-Control-Allow-Credentials:true (invalid combo, blocked cross-origin). Fixed to echo origin via allow_origin_regex when CORS_ORIGINS=*."
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Root-cause hunt for APK connectivity. Found CORS middleware used allow_origins=['*'] + allow_credentials=True. Preflight echoed origin correctly, but ACTUAL POST responses returned ACAO:* + ACAC:true (spec-violating; browsers block on credentialed/cross-domain). FIX: when CORS_ORIGINS=='*' use allow_origin_regex='.*' (Starlette then echoes the exact Origin on both preflight AND actual responses). Verified via curl: actual POST now returns 'access-control-allow-origin: https://app.emergent.sh' + 'vary: Origin' + credentials:true. Login regression check via screenshot PASS (reaches /connect). Need backend testing regression of auth + PUT /users/me + CORS headers."
+      - working: true
+        agent: "testing"
+        comment: "✅ ALL 7/7 BACKEND TESTS PASSED. CORS FIX VERIFIED + AUTH REGRESSION CLEAN. Tested at https://a262db76-d3a4-4af7-b8eb-159ac940d21b.preview.emergentagent.com/api. AUTH REGRESSION (4/4 PASS): (1a) POST /auth/login demo@demo.com/Demo1234! -> 200 with 'token' key ✅, (1b) POST /auth/register new user (qa_cors_d776100f@linguatest.com) -> 201 with 'token' key ✅, (1c) GET /auth/me with Bearer token -> 200 with user object ✅, (1d) POST /auth/login wrong password -> 401 ✅. ONBOARDING SAVE (1/1 PASS): (2) PUT /users/me with demo@demo.com token and body {native_language:'en',learning_languages:['es'],learning_language:'es',country:'United States',birthday:'2000-06-15',gender:'male',interests:['Football','Basketball']} -> 200 with data reflected (native_language='en', interests include Football/Basketball) ✅. CORS HEADERS SPEC-COMPLIANT (2/2 PASS): (3a) Actual POST /auth/login WITH Origin:'https://app.emergent.sh' -> Access-Control-Allow-Origin='https://app.emergent.sh' (echoed, NOT '*'), Access-Control-Allow-Credentials='true', Vary='Origin' present ✅, (3b) OPTIONS preflight /auth/login WITH Origin:'https://app.emergent.sh' -> Access-Control-Allow-Origin='https://app.emergent.sh' (echoed), Access-Control-Allow-Credentials='true' ✅. NO CRITICAL ISSUES FOUND. CORS fix is working correctly - server now echoes the exact request Origin instead of returning '*', making responses spec-compliant with credentialed requests. Auth endpoints fully functional. Onboarding save responds quickly (no timeout, no 500). Backend ready for APK deployment."
+frontend:
+  - task: "api.ts request() had NO network timeout -> stalled request (e.g. onboarding PUT /users/me on flaky APK network) hangs forever -> infinite spinner ('stuck on onboarding'). Added 20s AbortController timeout."
+    implemented: true
+    working: "NA"
+    file: "frontend/src/utils/api.ts"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "PUT /users/me verified fast server-side (HTTP 200 in 0.14s) and full onboarding passes on web (testing agent). APK stuck symptom = fetch with no timeout hanging on a stalled connection. FIX: added AbortController with 20s timeout (merged with any caller signal); on timeout throws 'Can\\'t reach the server. Check your connection.' instead of hanging. Screenshot login regression PASS."
+  - task: "Deployment readiness config lost on fork (root cause of repeated .env loss + APK not reaching stable backend)"
+    implemented: true
+    working: "NA"
+    file: ".gitignore; frontend/.env; /etc/supervisor/conf.d/supervisord.conf"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "deployment_agent found blockers: (1) .gitignore blocked .env/.env.*/*.env -> .env lost on every fork AND deploy can't inject prod URLs. Removed blanket .env ignores (kept only .env.local). (2) frontend/.env missing EXPO_TUNNEL_SUBDOMAIN + EXPO_USE_FAST_RESOLVER -> added. (3) supervisor expo cmd missing --tunnel -> added 'yarn expo start --tunnel --port 3000'; @expo/ngrok+ngrok-bin present; expo now stable (uptime>1min), 'Tunnel connected. Tunnel ready.', preview HTTP 200, app loads. NOTE FOR USER: for the PUBLISHED APK to reach a stable backend they must DEPLOY (backend gets a stable prod URL the build points to) — the dev preview URL is ephemeral."
+agent_communication:
+  - agent: "main"
+    message: "APK connectivity fixes done. Please run BACKEND regression: (1) auth still works — login demo@demo.com/Demo1234! -> 200 token; register new email -> token; GET /auth/me with token -> 200; wrong password -> 401. (2) PUT /api/users/me with token and body {native_language:'en',learning_languages:['es'],learning_language:'es',country:'United States',birthday:'2000-06-15',gender:'male',interests:['Football','Basketball']} -> 200 with updated user. (3) CORS: send an actual POST to /api/auth/login WITH header 'Origin: https://app.emergent.sh' and confirm the response's Access-Control-Allow-Origin is 'https://app.emergent.sh' (the echoed origin), NOT '*', while Access-Control-Allow-Credentials is 'true'. Base: https://a262db76-d3a4-4af7-b8eb-159ac940d21b.preview.emergentagent.com/api . Do NOT test Google OAuth. Report any 500s or CORS returning '*'."
+  - agent: "testing"
+    message: "✅ BACKEND REGRESSION COMPLETE - ALL 7/7 TESTS PASSED. Tested all requested scenarios at public URL. RESULTS: (1) AUTH REGRESSION: Login demo@demo.com -> 200 with token ✅, Register new user (qa_cors_d776100f@linguatest.com) -> 201 with token ✅, GET /auth/me with token -> 200 with user object ✅, Login wrong password -> 401 ✅. (2) ONBOARDING SAVE: PUT /users/me with demo@demo.com token and full onboarding data -> 200 with data reflected correctly (native_language='en', interests include Football/Basketball) ✅. (3) CORS HEADERS SPEC-COMPLIANT: Actual POST /auth/login WITH Origin header 'https://app.emergent.sh' -> Access-Control-Allow-Origin='https://app.emergent.sh' (echoed, NOT '*'), Access-Control-Allow-Credentials='true', Vary='Origin' present ✅. OPTIONS preflight -> Access-Control-Allow-Origin='https://app.emergent.sh' (echoed), Access-Control-Allow-Credentials='true' ✅. NO BUGS FOUND. The CORS fix is working correctly - server now echoes the exact request Origin instead of returning '*', making responses spec-compliant with credentialed requests. Auth endpoints fully functional. Onboarding save responds quickly (no timeout, no 500). Backend ready for APK deployment."
+test_plan:
+  current_focus:
+    - "✅ BACKEND COMPLETE: CORS spec compliance verified (7/7 tests passed) - auth regression clean, onboarding save working, CORS headers spec-compliant"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+
 ## CURRENT (2026-09-21 PM) — BUG FIX: "Can't reach the server" on signup/login (fork lost .env)
 user_problem_statement: "User (Bengali): When I try to sign up / login it says 'can't reach the server'. Fix it. (Also earlier: remove email login + publish/APK readiness — pending user clarification.)"
 backend:
@@ -122,18 +175,22 @@ backend:
 frontend:
   - task: "Restore lost frontend/.env so EXPO_PUBLIC_BACKEND_URL is defined (root cause of 'can't reach the server' on signup/login)"
     implemented: true
-    working: "NA"
+    working: true
     file: "frontend/.env"
     stuck_count: 0
     priority: "high"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
       - working: "NA"
         agent: "main"
         comment: "ROOT CAUSE: frontend/.env missing after fork -> process.env.EXPO_PUBLIC_BACKEND_URL undefined in bundle -> src/utils/api.ts request() network failure -> auth screen showed 'Can't reach the server'. FIX: recreated frontend/.env with EXPO_PUBLIC_BACKEND_URL + EXPO_PACKAGER_PROXY_URL + EXPO_PACKAGER_HOSTNAME (a262db76-...preview.emergentagent.com), cleared metro cache, restarted expo (log confirms 'env: export EXPO_PUBLIC_BACKEND_URL'). Main verified via screenshot: login demo@demo.com/Demo1234! -> navigated to /connect, no error text. Needs testing-agent verification of real signup + login reachability."
+      - working: true
+        agent: "testing"
+        comment: "✅ FRONTEND AUTH + ONBOARDING FLOW VERIFIED - ALL 3/3 TEST CASES PASSED. Tested full end-to-end flow at https://a262db76-d3a4-4af7-b8eb-159ac940d21b.preview.emergentagent.com. (1) NEW USER SIGNUP + ONBOARDING: Created newtester+0e00wpnu@testmello.com, navigated to /onboarding, completed all 5 steps (native language English, learning Spanish, country US, DOB 2000-06-15 valid age + Male, selected interest), reached /connect main app with Day 1 Streak popup ✅. (2) EXISTING USER LOGIN: demo@demo.com / Demo1234! successfully logged in and reached /connect ✅. (3) WRONG PASSWORD: demo@demo.com / wrongpass correctly rejected with error 'Wrong email or password. Please try again.', stayed on auth page, no navigation ✅. NO CRITICAL ISSUES. Frontend .env restore successful - EXPO_PUBLIC_BACKEND_URL is correctly defined and all auth/onboarding flows working. BUG FIX VERIFIED: 'Can't reach the server' issue fully resolved."
 test_plan:
   current_focus:
     - "✅ BACKEND COMPLETE: All email/password auth endpoints verified working after .env restore (14/14 tests passed)"
+    - "✅ FRONTEND COMPLETE: Full auth + onboarding flow verified working (3/3 test cases passed)"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -165,6 +222,8 @@ agent_communication:
 
   - agent: "main"
     message: "USER REQUEST: thoroughly verify EMAIL signup + signin flows work end-to-end via the UI; fix ONLY email auth if broken (user decided to KEEP email login). Requesting FRONTEND UI test of app/auth.tsx. Public URL: https://a262db76-d3a4-4af7-b8eb-159ac940d21b.preview.emergentagent.com . Auth screen testIDs: auth-email-input, auth-password-input, auth-name-input (register only), auth-submit-btn, auth-switch-mode-btn, auth-toggle-password-btn, auth-error-text, auth-google-btn. Existing login account: demo@demo.com / Demo1234! (has languages set -> should land on /(tabs)/connect, may show a Day-1 check-in dialog with an 'Awesome!' button). A NEW registered email has no languages -> should land on /onboarding. Test: (1) SIGN UP new unique email -> reaches onboarding; (2) SIGN IN demo@demo.com/Demo1234! -> reaches connect tabs; (3) wrong password -> 'Wrong email or password' error; (4) duplicate email signup -> already registered error; (5) invalid email / short password inline validation. Do NOT test Google OAuth. Report exact failures."
+  - agent: "testing"
+    message: "✅ FULL AUTH + ONBOARDING FLOW VERIFICATION COMPLETE - ALL 3/3 TEST CASES PASSED. Tested at https://a262db76-d3a4-4af7-b8eb-159ac940d21b.preview.emergentagent.com. TEST CASE 1 (SIGN UP + ONBOARDING): ✅ PASSED - Created new user newtester+0e00wpnu@testmello.com / Test1234!, successfully navigated to /onboarding after signup, completed all 5 onboarding steps (step0: English native language, step1: Spanish learning language, step2: United States country, step3: DOB 2000-06-15 age 24-25 valid + Male gender, step4: selected interest), clicked 'Start Connecting', successfully reached /connect main app with 'Day 1 Streak!' popup (expected for new users). TEST CASE 2 (LOGIN EXISTING): ✅ PASSED - Logged in with demo@demo.com / Demo1234!, successfully reached /connect main app, no errors encountered. TEST CASE 3 (NEGATIVE - WRONG PASSWORD): ✅ PASSED - Attempted login with demo@demo.com / wrongpass, error message correctly displayed 'Wrong email or password. Please try again.', did NOT navigate away from /auth?mode=login (stayed on auth page), auth form remained present, expected 401 console error logged (correct behavior). CONSOLE & NETWORK: One expected 401 error for wrong password (correct), no network request failures, no critical console errors. NO CRITICAL ISSUES FOUND. The full authentication + onboarding flow is working correctly. New users CAN sign up and complete onboarding to enter the main app. Existing users CAN log in and reach the main app. Wrong passwords are correctly rejected with appropriate error messages. User report of 'login/signup not working, can't enter the app' appears to be resolved. Main agent's verification was correct - both signup and login work on preview."
 
   - agent: "main"
     message: "BUILD-READINESS CHECK (user asked to verify no pre-existing files/config would break the APK build). FOUND + FIXED a build blocker: fork had lost yarn.lock and left package-lock.json, but this is a yarn project (packageManager yarn@1.22.22) and .easignore excludes package-lock.json while expecting yarn.lock -> EAS build context would have NO lockfile. FIX: removed package-lock.json, ran `yarn install` -> regenerated yarn.lock (7173 lines, 338KB), `yarn install --frozen-lockfile` exit 0. FULL BUILD VERIFICATION ALL PASS: npx expo-doctor 21/21 ✅; expo config --type prebuild -> googleServicesFile './google-services.json' (relative), package+bundleIdentifier match com.emergent.communityspeak.z97eev ✅; npx tsc --noEmit exit 0 (clean) ✅; EAS prebuild SIMULATION in /tmp (symlinked node_modules): `expo prebuild --no-install --platform android` exit 0, android/app/google-services.json copied, applicationId correct, gradle.properties useLegacyPackaging=true + minSdkVersion=24 ✅. No stray credential files (.jks/.p8/service-account). google-services.json valid JSON (2 clients). No leftover android/ios native dirs. All 7 app.json image assets exist. Build is ready to publish."
