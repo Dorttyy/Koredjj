@@ -1,27 +1,28 @@
 {
   "project_info": {
-    "project_number": "618298484905",
-    "project_id": "mello-16ce3",
-    "storage_bucket": "mello-16ce3.firebasestorage.app"
+    "project_number": "390731115250",
+    "project_id": "mello-60fab",
+    "storage_bucket": "mello-60fab.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:618298484905:android:ce360b25c058ad195be1b8",
-        "android_client_info": { "package_name": "com.emergent.communityspeak.z97eev" }
+        "mobilesdk_app_id": "1:390731115250:android:6f0a5ff30da6e936a23e6b",
+        "android_client_info": {
+          "package_name": "com.emergent.communityspeak.z97eev"
+        }
       },
       "oauth_client": [],
-      "api_key": [{ "current_key": "AIzaSyAKNgPO_curVEeY1Tg6T0ERMXlutpSQkpU" }],
-      "services": { "appinvite_service": { "other_platform_oauth_client": [] } }
-    },
-    {
-      "client_info": {
-        "mobilesdk_app_id": "1:618298484905:android:62057510a83614b85be1b8",
-        "android_client_info": { "package_name": "com.mello" }
-      },
-      "oauth_client": [],
-      "api_key": [{ "current_key": "AIzaSyAKNgPO_curVEeY1Tg6T0ERMXlutpSQkpU" }],
-      "services": { "appinvite_service": { "other_platform_oauth_client": [] } }
+      "api_key": [
+        {
+          "current_key": "AIzaSyAPzMX_32uBdZ6PPxSMkZ2ebJn057EIO7c"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
     }
   ],
   "configuration_version": "1"

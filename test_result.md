@@ -132,6 +132,17 @@ frontend:
       - working: "NA"
         agent: "main"
         comment: "Created frontend/.env with public proxy URL and restored yarn.lock. Supervisor expo restarted cleanly."
+  - task: "Update frontend/google-services.json with new Firebase credentials (project mello-60fab)"
+    implemented: true
+    working: true
+    file: "frontend/google-services.json"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Replaced google-services.json with user-provided config for Firebase project mello-60fab. Verified npx expo config --type prebuild attaches googleServicesFile without warnings; npx expo-doctor 21/21 passed; npx tsc --noEmit passed clean."
 metadata:
   created_by: "main_agent"
   version: "1.0"
