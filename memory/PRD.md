@@ -280,7 +280,7 @@ Note: Daily streak (backend touch_streak + profile/user page display) already ex
 
 ## Deployment readiness fixes (this session — deployment_agent PASS)
 ✅ .gitignore: removed .env/.env.*/*.env blocks (env files must be tracked for deploys)
-✅ frontend/.env: added EXPO_TUNNEL_SUBDOMAIN=apk-deployment-6
+✅ frontend/.env: added EXPO_TUNNEL_SUBDOMAIN=gmail-notify-service
 ✅ Supervisor expo command now `expo start --tunnel --port 3000` + @expo/ngrok devDep installed
 ⚠️ ngrok install re-hoisted event-target-shim@6 to root → Metro "Missing ./index specifier" (react-native-webrtc imports event-target-shim/index). Fixed via patch-package: patches/event-target-shim+6.0.2.patch (adds "./index" export) + postinstall script. DO NOT REMOVE the patch or postinstall.
 ✅ N+1 queries batched ($in + map): moments.py (list authors, comment authors), chats.py (list partners; conversation_public/moment_public accept optional prefetched doc), rooms.py (list hosts)

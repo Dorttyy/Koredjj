@@ -9,7 +9,7 @@ import json
 from typing import Dict, Any
 
 # Base URL from frontend/.env
-BASE_URL = "https://apk-deployment-6.preview.emergentagent.com/api"
+BASE_URL = "https://gmail-notify-service.preview.emergentagent.com/api"
 
 # Test credentials
 TEST_EMAIL = "mei@demo.com"

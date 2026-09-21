@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 # Load backend environment
 load_dotenv('/app/backend/.env')
 
-BACKEND_URL = os.getenv('EXPO_PUBLIC_BACKEND_URL', 'https://apk-deployment-6.preview.emergentagent.com')
+BACKEND_URL = os.getenv('EXPO_PUBLIC_BACKEND_URL', 'https://gmail-notify-service.preview.emergentagent.com')
 API_BASE = f"{BACKEND_URL}/api"
 
 # QA test credentials from test_credentials.md

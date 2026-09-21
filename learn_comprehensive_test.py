@@ -6,7 +6,7 @@ Following the exact test requirements from the review request
 import requests
 import json
 
-BASE_URL = "https://apk-deployment-6.preview.emergentagent.com/api"
+BASE_URL = "https://gmail-notify-service.preview.emergentagent.com/api"
 MEI_EMAIL = "mei@demo.com"
 MEI_PASSWORD = "Demo1234!"
 DIEGO_EMAIL = "diego@demo.com"

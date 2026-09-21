@@ -12,7 +12,7 @@ Iteration 24 — interactive flow tests:
 import asyncio, json, os
 from playwright.async_api import async_playwright
 
-BASE = "https://apk-deployment-6.preview.emergentagent.com"
+BASE = "https://gmail-notify-service.preview.emergentagent.com"
 EMAIL = "mei@demo.com"
 PASSWORD = "Demo1234!"
 

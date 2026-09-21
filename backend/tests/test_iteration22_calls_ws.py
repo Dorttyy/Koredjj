@@ -27,7 +27,7 @@ import websockets
 # back to localhost if the WS scheme fails.
 PUBLIC = os.environ.get(
     "EXPO_PUBLIC_BACKEND_URL",
-    "https://apk-deployment-6.preview.emergentagent.com",
+    "https://gmail-notify-service.preview.emergentagent.com",
 ).rstrip("/")
 BASE = f"{PUBLIC}/api"
 # Prefer localhost for WS to avoid ingress-strip issues; backend runs on 8001.

@@ -10,7 +10,7 @@ import re
 import time
 from playwright.async_api import async_playwright
 
-BASE = "https://apk-deployment-6.preview.emergentagent.com"
+BASE = "https://gmail-notify-service.preview.emergentagent.com"
 
 
 async def login(page, email, password):
