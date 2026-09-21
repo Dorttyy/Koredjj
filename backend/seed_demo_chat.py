@@ -1,6 +1,7 @@
+import os
 import requests
 
-BASE = "http://localhost:8001/api"
+BASE = os.environ.get("BACKEND_URL", "http://localhost:8001").rstrip("/") + "/api"
 
 
 def reg_or_login(email, name, pw="Demo1234!"):

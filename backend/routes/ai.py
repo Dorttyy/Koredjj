@@ -312,9 +312,12 @@ def _get_whisper():
     """Lazily load a tiny CPU Whisper model (int8). Cached across requests."""
     global _whisper_model
     if _whisper_model is None:
-        from faster_whisper import WhisperModel
-
-        _whisper_model = WhisperModel("tiny", device="cpu", compute_type="int8")
+        try:
+            from faster_whisper import WhisperModel
+            _whisper_model = WhisperModel("tiny", device="cpu", compute_type="int8")
+        except (ImportError, Exception) as e:
+            logger.warning("Whisper model unavailable: %s", e)
+            return None
     return _whisper_model
 
 
@@ -342,6 +345,8 @@ async def transcribe(body: TranscribeRequest, current_user: CurrentUser):
                 f.write(data)
                 tmp_path = f.name
             model = _get_whisper()
+            if not model:
+                raise HTTPException(status_code=503, detail="Audio transcription model is unavailable in this environment.")
             lang = body.language if (body.language and len(body.language) == 2) else None
             segments, _info = model.transcribe(tmp_path, beam_size=1, language=lang)
             return " ".join(seg.text.strip() for seg in segments).strip()

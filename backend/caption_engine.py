@@ -26,7 +26,10 @@ def process(pcm: bytes, targets: list[str]):
     import ctranslate2
     import numpy as np
     import sentencepiece
-    from faster_whisper import WhisperModel
+    try:
+        from faster_whisper import WhisperModel
+    except ImportError:
+        return None
 
     if _speech is None:
         _speech = WhisperModel(str(ROOT / "speech"), device="cpu", compute_type="int8", cpu_threads=2)

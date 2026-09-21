@@ -120,9 +120,12 @@ async def seed_admin():
 app = FastAPI(title="Mello API", lifespan=lifespan)
 
 
+@app.get("/")
+@app.get("/health")
 @app.get("/api/")
-async def root():
-    return {"message": "Mello API"}
+@app.get("/api/health")
+async def health_check():
+    return {"status": "ok", "message": "Mello API"}
 
 
 # 1-to-1 call signaling (bound to an authenticated call session) and voice-room

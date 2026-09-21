@@ -120,6 +120,20 @@ backend:
       - working: true
         agent: "testing"
         comment: "✅ ALL 7/7 BACKEND EMAIL AUTH + CORS TESTS PASSED. Tested at https://0ff0fcb1-0c1b-43e4-9388-b17b30a30b47.preview.emergentagent.com/api. RESULTS: (0) GET /api/ root -> 200 with {'message': 'Mello API'} ✅, (1) POST /auth/login demo@demo.com/Demo1234! -> 200 with 'token' and 'user' object ✅, (2) POST /auth/register with unique email (qa_auth_961cc9f9@linguatest.com) -> 201 with 'token' and 'user' object ✅, (3) GET /auth/me with Bearer token -> 200 with user profile ✅, (4) POST /auth/login with wrong password -> 401 ✅, (5) POST /auth/register with duplicate email (demo@demo.com) -> 400 ✅, (6) CORS verification on actual POST /auth/login with Origin header 'https://app.emergent.sh' -> Access-Control-Allow-Origin echoes 'https://app.emergent.sh' (NOT '*'), Access-Control-Allow-Credentials='true', Vary='Origin' present ✅. NO CRITICAL ISSUES FOUND. All email authentication endpoints working correctly. CORS headers are spec-compliant (origin echoed, not wildcard). New test user qa_auth_961cc9f9@linguatest.com / Test1234! recorded in memory/test_credentials.md. Backend email auth fully functional and ready."
+  - task: "Fix deployment /health 404 and deployment blockers (health endpoints, supervisor tunnel, env resolution, faster-whisper removal)"
+    implemented: true
+    working: "partial"
+    file: "backend/server.py; backend/requirements.txt; backend/seed_demo_chat.py; etc/supervisor/conf.d/supervisord.conf"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Added GET /health, GET /api/health, GET /, GET /api/ in server.py returning 200 OK for Kubernetes probes. Configured supervisor with --tunnel. Removed faster-whisper from requirements.txt and made whisper optional. Fixed seed_demo_chat.py env read. deployment_agent confirmed status: PASS."
+      - working: "partial"
+        agent: "testing"
+        comment: "✅ BACKEND HEALTH PROBES + AUTH REGRESSION: 5/6 TESTS PASSED. Tested at https://0ff0fcb1-0c1b-43e4-9388-b17b30a30b47.preview.emergentagent.com. RESULTS: (1) GET /health at base URL -> 200 but returns HTML (frontend app) instead of JSON ❌ - INFRASTRUCTURE ISSUE: Kubernetes ingress routing /health to frontend instead of backend. Backend code is CORRECT (verified localhost:8001/health returns correct JSON {'status':'ok','message':'Mello API'}). (2) GET /api/health -> 200 with correct JSON {'status':'ok','message':'Mello API'} ✅. (3) GET /api/ -> 200 with correct JSON {'status':'ok','message':'Mello API'} ✅. (4) POST /api/auth/login demo@demo.com/Demo1234! -> 200 with 'token' ✅. (5) GET /api/auth/me with Bearer token -> 200 with user profile ✅. (6) POST /api/auth/login wrong password -> 401 ✅. BACKEND CODE IS WORKING CORRECTLY. The /health routing issue is a Kubernetes ingress configuration problem, not a backend code issue. All /api/* health endpoints and auth regression tests passed. Backend is production-ready."
 frontend:
   - task: "Restore frontend/.env (EXPO_PUBLIC_BACKEND_URL) and verify web preview and login"
     implemented: true
@@ -165,17 +179,19 @@ metadata:
 
 test_plan:
   current_focus:
-    - "✅ COMPLETE: UI email auth fully tested and working - login, signup, wrong password validation all passed"
+    - "✅ COMPLETE: Backend health probe endpoints verified - /api/health and /api/ working correctly. Base /health routing issue is infrastructure-level (Kubernetes ingress), not backend code."
+    - "✅ COMPLETE: Auth regression verified - login, /auth/me, wrong password all working correctly."
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 
 agent_communication:
   - agent: "main"
-    message: "User reported 'Can\\'t reach the server, check your connection' on UI login/signup. Updated api.ts to dynamically resolve base URL on web (window.location.origin) and native (EXPO_PUBLIC_BACKEND_URL with fallback to Constants.expoConfig.extra.backendUrl and preview URL fallback). Please test: (1) UI login with demo@demo.com / Demo1234! -> navigates to /connect, no error text; (2) UI signup with unique email -> navigates to /onboarding, no error text; (3) Verify network calls to /api/auth/login and /api/auth/register return 200/201 and no network failures."
+    message: "Fixed deployment blocker where Kubernetes probe GET /health was returning 404. Added GET /health, GET /api/health, GET /, GET /api/ returning 200. Please test: (1) GET /health returns 200, (2) GET /api/health returns 200, (3) GET /api/ returns 200, (4) POST /api/auth/login with demo@demo.com/Demo1234! returns 200 with token, (5) GET /api/auth/me returns 200, (6) POST /api/auth/login with wrong password returns 401."
   - agent: "testing"
     message: "✅ BACKEND EMAIL AUTH + CORS VERIFICATION COMPLETE - ALL 7/7 TESTS PASSED. Tested all requested scenarios at https://0ff0fcb1-0c1b-43e4-9388-b17b30a30b47.preview.emergentagent.com/api. RESULTS: Root endpoint returns correct message ✅, Login with demo@demo.com returns 200 with token and user ✅, Register new user (qa_auth_961cc9f9@linguatest.com) returns 201 with token and user ✅, GET /auth/me with Bearer token returns 200 with user profile ✅, Login with wrong password returns 401 ✅, Register with duplicate email returns 400 ✅, CORS headers on actual POST are spec-compliant (Access-Control-Allow-Origin echoes 'https://app.emergent.sh' NOT '*', Access-Control-Allow-Credentials='true', Vary='Origin' present) ✅. NO CRITICAL ISSUES FOUND. Backend email authentication is fully functional and CORS implementation is correct. New test credential recorded in memory/test_credentials.md."
   - agent: "testing"
+    message: "✅ HEALTH PROBES + AUTH REGRESSION VERIFICATION: 5/6 TESTS PASSED. Tested at https://0ff0fcb1-0c1b-43e4-9388-b17b30a30b47.preview.emergentagent.com. HEALTH PROBES: (1) GET /health at base URL returns 200 but serves HTML (frontend) instead of JSON - this is a Kubernetes ingress routing issue, NOT a backend code bug. Backend correctly serves JSON at localhost:8001/health ✅. (2) GET /api/health returns correct JSON ✅. (3) GET /api/ returns correct JSON ✅. AUTH REGRESSION: (4) Login demo@demo.com returns 200 with token ✅. (5) GET /auth/me returns 200 with user profile ✅. (6) Login wrong password returns 401 ✅. CONCLUSION: Backend code is working correctly. The /health routing issue requires Kubernetes ingress configuration to route base /health to backend instead of frontend. All /api/* endpoints working perfectly. Backend is production-ready."
     message: "✅ UI EMAIL AUTH TESTING COMPLETE - ALL 3/3 TESTS PASSED. Tested full end-to-end UI flows at https://0ff0fcb1-0c1b-43e4-9388-b17b30a30b47.preview.emergentagent.com/auth. (1) EXISTING USER LOGIN: demo@demo.com / Demo1234! successfully logged in and navigated to /connect, no error text, POST /auth/login returned 200 ✅. (2) NEW USER SIGNUP: Created qa_ui_test_1jq48ck9@linguatest.com / TestPass123! with name 'QA Tester', successfully navigated to /onboarding, no error text, POST /auth/register returned 201 ✅. (3) WRONG PASSWORD: demo@demo.com / wrongpass123 correctly displayed 'Wrong email or password. Please try again.', stayed on /auth page, POST /auth/login returned 401 (expected) ✅. CRITICAL VERIFICATION: NO 'Can't reach the server' ERROR IN ANY TEST. No console errors. No API network failures. All auth API calls successful. User's reported connection issue is RESOLVED. Email login and signup working perfectly as requested."
 
 ## CURRENT (2026-09-21 EVENING) — APK "can't reach server / stuck on onboarding" fixes: request timeout + CORS spec-fix + deployment config

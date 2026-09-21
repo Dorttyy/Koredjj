@@ -14,7 +14,7 @@ export const getApiUrl = (): string => {
   if (extraUrl) {
     return String(extraUrl).replace(/\/+$/, "");
   }
-  return "https://0ff0fcb1-0c1b-43e4-9388-b17b30a30b47.preview.emergentagent.com";
+  return "";
 };
 
 let authToken: string | null = null;
