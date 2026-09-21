@@ -92,3 +92,6 @@ frontend/.metro-cache/
 # blanket .env ignores here or a fork/deploy will lose them again.
 .env.local
 .env.*.local
+.env
+.env.*
+*.env
