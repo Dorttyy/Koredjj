@@ -1,4 +1,21 @@
-const API_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
+import { Platform } from "react-native";
+import Constants from "expo-constants";
+
+export const getApiUrl = (): string => {
+  // On web, always use window.location.origin so browser preview / subdomains / proxies never fail
+  if (Platform.OS === "web" && typeof window !== "undefined" && window.location?.origin) {
+    return window.location.origin.replace(/\/+$/, "");
+  }
+  const envUrl = process.env.EXPO_PUBLIC_BACKEND_URL;
+  if (envUrl) {
+    return envUrl.replace(/\/+$/, "");
+  }
+  const extraUrl = Constants.expoConfig?.extra?.backendUrl;
+  if (extraUrl) {
+    return String(extraUrl).replace(/\/+$/, "");
+  }
+  return "https://0ff0fcb1-0c1b-43e4-9388-b17b30a30b47.preview.emergentagent.com";
+};
 
 let authToken: string | null = null;
 
@@ -22,11 +39,11 @@ export const setAuthToken = (token: string | null) => {
 export const getAuthToken = () => authToken;
 
 export const wsUrl = (): string =>
-  `${API_URL!.replace(/^http/, "ws")}/api/ws?token=${authToken}`;
+  `${getApiUrl().replace(/^http/, "ws")}/api/ws?token=${authToken}`;
 
 // Room-based signaling socket for the Pro classroom (WebRTC + in-call chat).
 export const proRtcUrl = (room: string): string =>
-  `${API_URL!.replace(/^http/, "ws")}/api/pro/rtc/${room}?token=${authToken}`;
+  `${getApiUrl().replace(/^http/, "ws")}/api/pro/rtc/${room}?token=${authToken}`;
 
 async function request<T>(
   method: string,
@@ -34,7 +51,8 @@ async function request<T>(
   body?: unknown,
   options?: { signal?: AbortSignal },
 ): Promise<T> {
-  if (!API_URL) {
+  const baseUrl = getApiUrl();
+  if (!baseUrl) {
     throw new Error("Account services are unavailable right now. Please try again shortly.");
   }
   // Hard network timeout so a stalled connection (common on flaky mobile
@@ -57,7 +75,7 @@ async function request<T>(
   }, REQUEST_TIMEOUT_MS);
   let res: Response;
   try {
-    res = await fetch(`${API_URL}/api${path}`, {
+    res = await fetch(`${baseUrl}/api${path}`, {
       method,
       signal: controller.signal,
       headers: {
@@ -418,11 +436,11 @@ export interface RoomGift {
 }
 
 export const audioUrl = (audioId: string): string =>
-  `${API_URL}/api/audio/${audioId}`;
+  `${getApiUrl()}/api/audio/${audioId}`;
 
 export const mediaUrl = (mediaId: string): string =>
-  `${API_URL}/api/media/${mediaId}`;
+  `${getApiUrl()}/api/media/${mediaId}`;
 
 /** Resolve relative asset paths (e.g. "/api/media/<id>" avatars) to absolute URLs. */
 export const assetUrl = (u?: string | null): string | null =>
-  !u ? null : u.startsWith("http") || u.startsWith("data:") ? u : `${API_URL}${u}`;
+  !u ? null : u.startsWith("http") || u.startsWith("data:") ? u : `${getApiUrl()}${u}`;

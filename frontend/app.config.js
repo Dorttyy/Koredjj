@@ -102,6 +102,7 @@ module.exports = ({ config }) => {
     android,
     extra: {
       ...config.extra,
+      backendUrl: process.env.EXPO_PUBLIC_BACKEND_URL || "https://0ff0fcb1-0c1b-43e4-9388-b17b30a30b47.preview.emergentagent.com",
       revenueCat: {
         testApiKey: process.env.EXPO_PUBLIC_REVENUECAT_TEST_API_KEY,
         iosApiKey: process.env.EXPO_PUBLIC_REVENUECAT_IOS_API_KEY,

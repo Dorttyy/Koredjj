@@ -143,6 +143,20 @@ frontend:
       - working: true
         agent: "main"
         comment: "Replaced google-services.json with user-provided config for Firebase project mello-60fab. Verified npx expo config --type prebuild attaches googleServicesFile without warnings; npx expo-doctor 21/21 passed; npx tsc --noEmit passed clean."
+  - task: "UI dynamic base URL and email signup/login connection resilience"
+    implemented: true
+    working: true
+    file: "frontend/src/utils/api.ts; frontend/app.config.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Updated api.ts to dynamically resolve base URL on web (window.location.origin) and native (EXPO_PUBLIC_BACKEND_URL with fallback to Constants.expoConfig.extra.backendUrl and preview URL fallback). Removed static undefined risks in audioUrl, mediaUrl, assetUrl. Added backendUrl to extra in app.config.js. Rebuilt and restarted expo."
+      - working: true
+        agent: "testing"
+        comment: "✅ ALL 3/3 UI EMAIL AUTH TESTS PASSED. Tested at https://0ff0fcb1-0c1b-43e4-9388-b17b30a30b47.preview.emergentagent.com/auth. TEST 1 (EXISTING USER LOGIN): Filled demo@demo.com / Demo1234!, clicked login, successfully navigated to /connect, NO error text displayed, API call POST /auth/login returned 200 ✅. TEST 2 (NEW USER SIGNUP): Created unique user qa_ui_test_1jq48ck9@linguatest.com / TestPass123!, filled name 'QA Tester', clicked signup, successfully navigated to /onboarding, NO error text displayed, API call POST /auth/register returned 201 ✅. TEST 3 (WRONG PASSWORD VALIDATION): Filled demo@demo.com / wrongpass123, clicked login, correctly displayed error 'Wrong email or password. Please try again.', stayed on /auth page (did not navigate), API call POST /auth/login returned 401 (expected) ✅. NO 'Can't reach the server' ERROR IN ANY TEST. No critical console errors. No API network failures. All auth flows working correctly. User's reported connection issue is RESOLVED."
 metadata:
   created_by: "main_agent"
   version: "1.0"
@@ -151,16 +165,18 @@ metadata:
 
 test_plan:
   current_focus:
-    - "✅ BACKEND COMPLETE: All email auth endpoints verified working (7/7 tests passed) - root, login, register, /auth/me, wrong password 401, duplicate email 400, CORS headers spec-compliant"
+    - "✅ COMPLETE: UI email auth fully tested and working - login, signup, wrong password validation all passed"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 
 agent_communication:
   - agent: "main"
-    message: "Restored backend and frontend environment after fork. Please run backend tests at https://0ff0fcb1-0c1b-43e4-9388-b17b30a30b47.preview.emergentagent.com/api : (1) Root GET /api/ -> 200, (2) POST /api/auth/login demo@demo.com / Demo1234! -> 200 with token, (3) POST /api/auth/register with unique email -> 201 with token, (4) GET /api/auth/me with Bearer token -> 200, (5) POST /api/auth/login with wrong password -> 401, (6) POST /api/auth/register with existing email -> 400, (7) CORS verification on POST /api/auth/login with Origin header https://app.emergent.sh."
+    message: "User reported 'Can\\'t reach the server, check your connection' on UI login/signup. Updated api.ts to dynamically resolve base URL on web (window.location.origin) and native (EXPO_PUBLIC_BACKEND_URL with fallback to Constants.expoConfig.extra.backendUrl and preview URL fallback). Please test: (1) UI login with demo@demo.com / Demo1234! -> navigates to /connect, no error text; (2) UI signup with unique email -> navigates to /onboarding, no error text; (3) Verify network calls to /api/auth/login and /api/auth/register return 200/201 and no network failures."
   - agent: "testing"
     message: "✅ BACKEND EMAIL AUTH + CORS VERIFICATION COMPLETE - ALL 7/7 TESTS PASSED. Tested all requested scenarios at https://0ff0fcb1-0c1b-43e4-9388-b17b30a30b47.preview.emergentagent.com/api. RESULTS: Root endpoint returns correct message ✅, Login with demo@demo.com returns 200 with token and user ✅, Register new user (qa_auth_961cc9f9@linguatest.com) returns 201 with token and user ✅, GET /auth/me with Bearer token returns 200 with user profile ✅, Login with wrong password returns 401 ✅, Register with duplicate email returns 400 ✅, CORS headers on actual POST are spec-compliant (Access-Control-Allow-Origin echoes 'https://app.emergent.sh' NOT '*', Access-Control-Allow-Credentials='true', Vary='Origin' present) ✅. NO CRITICAL ISSUES FOUND. Backend email authentication is fully functional and CORS implementation is correct. New test credential recorded in memory/test_credentials.md."
+  - agent: "testing"
+    message: "✅ UI EMAIL AUTH TESTING COMPLETE - ALL 3/3 TESTS PASSED. Tested full end-to-end UI flows at https://0ff0fcb1-0c1b-43e4-9388-b17b30a30b47.preview.emergentagent.com/auth. (1) EXISTING USER LOGIN: demo@demo.com / Demo1234! successfully logged in and navigated to /connect, no error text, POST /auth/login returned 200 ✅. (2) NEW USER SIGNUP: Created qa_ui_test_1jq48ck9@linguatest.com / TestPass123! with name 'QA Tester', successfully navigated to /onboarding, no error text, POST /auth/register returned 201 ✅. (3) WRONG PASSWORD: demo@demo.com / wrongpass123 correctly displayed 'Wrong email or password. Please try again.', stayed on /auth page, POST /auth/login returned 401 (expected) ✅. CRITICAL VERIFICATION: NO 'Can't reach the server' ERROR IN ANY TEST. No console errors. No API network failures. All auth API calls successful. User's reported connection issue is RESOLVED. Email login and signup working perfectly as requested."
 
 ## CURRENT (2026-09-21 EVENING) — APK "can't reach server / stuck on onboarding" fixes: request timeout + CORS spec-fix + deployment config
 user_problem_statement: "User (Bengali, on real Android APK): login sometimes works but app gets STUCK on the last onboarding step ('What do you love?') with the Continue button spinning forever; earlier saw 'Can't reach the server' on login. Web preview works perfectly. Make the published APK reliably reach the backend."
