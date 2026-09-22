@@ -102,7 +102,7 @@ module.exports = ({ config }) => {
     android,
     extra: {
       ...config.extra,
-      backendUrl: process.env.EXPO_PUBLIC_BACKEND_URL || "",
+      backendUrl: process.env.EXPO_PUBLIC_BACKEND_URL || config.extra?.backendUrl || "",
       revenueCat: {
         testApiKey: process.env.EXPO_PUBLIC_REVENUECAT_TEST_API_KEY,
         iosApiKey: process.env.EXPO_PUBLIC_REVENUECAT_IOS_API_KEY,

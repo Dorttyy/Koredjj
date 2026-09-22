@@ -95,7 +95,7 @@ export default function Onboarding() {
     }
     setBusy(true);
     try {
-      const updated = await api.put<User>("/users/me", {
+      const payload = {
         native_language: nativeLang,
         learning_languages: learnLangs,
         learning_language: learnLangs[0],
@@ -103,11 +103,24 @@ export default function Onboarding() {
         birthday: dobToIso(dob),
         gender,
         interests,
-      });
+      };
+      let updated: User;
+      try {
+        updated = await api.put<User>("/users/me", payload);
+      } catch {
+        // Retry once after 1s for transient mobile network hiccups
+        await new Promise((r) => setTimeout(r, 1000));
+        updated = await api.put<User>("/users/me", payload);
+      }
       setUser(updated);
       router.replace("/(tabs)/connect");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Something went wrong");
+      const raw = e instanceof Error ? e.message : "Something went wrong";
+      if (/network|fetch|reach the server/i.test(raw)) {
+        setError("Can't reach the server. Please check your connection and try again.");
+      } else {
+        setError(raw);
+      }
     } finally {
       setBusy(false);
     }

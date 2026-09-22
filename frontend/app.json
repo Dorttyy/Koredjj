@@ -100,6 +100,9 @@
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "backendUrl": "https://gmail-notify-service.preview.emergentagent.com"
     }
   }
 }

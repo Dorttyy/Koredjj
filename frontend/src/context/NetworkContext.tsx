@@ -20,6 +20,7 @@ import React, {
   useState,
 } from "react";
 import { Platform } from "react-native";
+import { getApiUrl } from "@/src/utils/api";
 
 interface NetworkState {
   isOnline: boolean;
@@ -32,8 +33,6 @@ interface NetworkState {
 }
 
 const NetworkContext = createContext<NetworkState | null>(null);
-
-const PROBE_URL = "/api/auth/me"; // 200 or 401 both prove connectivity
 
 // Cached callable that the api.ts layer imports to report request outcomes
 // without needing React state.
@@ -52,11 +51,17 @@ export const NetworkProvider: React.FC<{ children: React.ReactNode }> = ({
   const failureRun = useRef(0);
 
   const probe = useCallback(async () => {
+    const baseUrl = getApiUrl();
+    if (!baseUrl && Platform.OS !== "web") {
+      // Cannot probe without a valid host URL on native; avoid false offline flag.
+      return;
+    }
+    const targetUrl = baseUrl ? `${baseUrl}/api/auth/me` : "/api/auth/me";
     try {
       // Small race-safe timeout so an unreachable host doesn't hang forever.
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 6000);
-      const res = await fetch(PROBE_URL, {
+      const res = await fetch(targetUrl, {
         method: "GET",
         signal: controller.signal,
       });
@@ -65,17 +70,20 @@ export const NetworkProvider: React.FC<{ children: React.ReactNode }> = ({
       if (res.status === 200 || res.status === 401) {
         failureRun.current = 0;
         setIsOnline(true);
+      } else {
+        failureRun.current += 1;
+        if (failureRun.current >= 3) setIsOnline(false);
       }
     } catch {
       failureRun.current += 1;
-      if (failureRun.current >= 1) setIsOnline(false);
+      if (failureRun.current >= 3) setIsOnline(false);
     }
   }, []);
 
   const reportFailure = useCallback(() => {
     failureRun.current += 1;
-    // Two back-to-back failures = confidently offline.
-    if (failureRun.current >= 2) setIsOnline(false);
+    // Three back-to-back failures = confidently offline.
+    if (failureRun.current >= 3) setIsOnline(false);
   }, []);
 
   const reportSuccess = useCallback(() => {
