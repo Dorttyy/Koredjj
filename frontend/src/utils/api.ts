@@ -4,6 +4,7 @@ import {
   ApiError,
   deviceHasInternet,
   makeNetError,
+  type NetFailureKind,
 } from "@/src/utils/net-diagnostics";
 
 /**
@@ -52,10 +53,10 @@ let authToken: string | null = null;
 // Bridge to NetworkContext so we can flip offline state on network-level
 // failures without turning `request()` into a hook consumer. Set from
 // `NetworkProvider`; noop before boot.
-let netFailureReporter: () => void = () => {};
+let netFailureReporter: (kind?: NetFailureKind) => void = () => {};
 let netSuccessReporter: () => void = () => {};
 export const bindNetworkTelemetry = (
-  failure: () => void,
+  failure: (kind?: NetFailureKind) => void,
   success: () => void,
 ) => {
   netFailureReporter = failure;
@@ -85,6 +86,7 @@ async function request<T>(
   if (!baseUrl) {
     // No server address in this build — a configuration problem, not a
     // connectivity problem. Say so instead of blaming the user's network.
+    netFailureReporter("no-backend-url");
     throw makeNetError("no-backend-url");
   }
   // Hard network timeout so a stalled connection (common on flaky mobile
@@ -124,12 +126,18 @@ async function request<T>(
     if (external?.aborted) {
       throw err instanceof Error ? err : new Error("Request cancelled");
     }
-    netFailureReporter();
-    if (timedOut) throw makeNetError("timeout", baseUrl);
+    if (timedOut) {
+      netFailureReporter("timeout");
+      throw makeNetError("timeout", baseUrl);
+    }
     // RN reports every transport error as "Network request failed", so ask the
     // OS whether the device is actually offline before choosing the message.
+    // The same verdict is handed to NetworkContext so the offline banner can
+    // say "can't reach the server" instead of "no network connection".
     const online = await deviceHasInternet();
-    throw makeNetError(online === false ? "offline" : "unreachable", baseUrl);
+    const kind: NetFailureKind = online === false ? "offline" : "unreachable";
+    netFailureReporter(kind);
+    throw makeNetError(kind, baseUrl);
   } finally {
     clearTimeout(timer);
     if (external) external.removeEventListener("abort", onExternalAbort);

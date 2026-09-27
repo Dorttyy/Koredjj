@@ -1,7 +1,9 @@
 /**
- * OfflineBanner — a purple "No network connection" strip that slides in
- * from the top when the user is offline. Matches the reference screenshot.
- * Renders nothing when online.
+ * OfflineBanner — a soft strip that slides in from the top while the app has
+ * no working connection. The copy depends on WHY, because "check your
+ * connection" is wrong (and actively misleading) when the phone is online and
+ * it is the backend that is missing or unreachable — the usual symptom of an
+ * APK installed before the server was deployed. Renders nothing when online.
  */
 
 import { Ionicons } from "@/src/ui/icons";
@@ -12,14 +14,33 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNetwork } from "@/src/context/NetworkContext";
 import { useTheme } from "@/src/context/ThemeContext";
 import { fonts, spacing, ThemeColors } from "@/src/theme";
+import { hostOf, isEphemeralHost } from "@/src/utils/net-diagnostics";
 
 export const OfflineBanner: React.FC = () => {
-  const { isOnline } = useNetwork();
+  const { isOnline, status, baseUrl } = useNetwork();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const styles = React.useMemo(() => makeStyles(colors), [colors]);
 
   if (isOnline) return null;
+
+  let icon: React.ComponentProps<typeof Ionicons>["name"] = "cloud-offline";
+  let title = "No network connection";
+  let subtitle = "Please check your network settings";
+
+  if (status === "no-server-url") {
+    icon = "warning-outline";
+    title = "No server address in this build";
+    subtitle = "Re-publish the app, then install the new build";
+  } else if (status === "server-down") {
+    icon = "cloud-offline-outline";
+    title = "Can't reach the server";
+    subtitle =
+      Platform.OS !== "web" && isEphemeralHost(baseUrl)
+        ? `${hostOf(baseUrl)} is a temporary address — deploy, then rebuild`
+        : `${hostOf(baseUrl)} isn't responding — retrying…`;
+  }
+
   return (
     <View
       pointerEvents="none"
@@ -36,10 +57,14 @@ export const OfflineBanner: React.FC = () => {
       ]}
       testID="offline-banner"
     >
-      <Ionicons name="cloud-offline" size={16} color={colors.brand} />
+      <Ionicons name={icon} size={16} color={colors.brand} />
       <View style={{ flex: 1 }}>
-        <Text style={styles.title}>No network connection</Text>
-        <Text style={styles.subtitle}>Please check your network settings</Text>
+        <Text style={styles.title} testID="offline-banner-title">
+          {title}
+        </Text>
+        <Text style={styles.subtitle} numberOfLines={2}>
+          {subtitle}
+        </Text>
       </View>
     </View>
   );
