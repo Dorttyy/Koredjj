@@ -42,7 +42,17 @@ def original_result(text: str, target: str = "auto", source: str = "auto", *, ca
 
 
 async def initialize():
-    await cache.create_index("expires_at", expireAfterSeconds=0)
+    """Create the lookup index only — NEVER a TTL/auto-delete index.
+
+    Freshness is enforced at READ time (`expires_at > now` in `translate()`),
+    so an expired entry is simply not served and is overwritten by the next
+    upsert for the same key. A `expireAfterSeconds` index would make startup
+    silently delete stored records, which is not allowed in deployment.
+    """
+    try:
+        await cache.create_index([("user_id", 1), ("expires_at", -1)], name="user_expiry_lookup")
+    except Exception:
+        logger.warning("Translation cache index unavailable; cache still works without it")
 
 
 async def shutdown():

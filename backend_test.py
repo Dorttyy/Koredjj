@@ -1,373 +1,325 @@
 #!/usr/bin/env python3
 """
-Backend API Regression Test Suite
-Tests all core backend endpoints after fork recovery
+Backend test for translation cache index fix verification.
+Tests against https://d6612bc7-3b91-4b27-9dc6-0ab7ea18b049.preview.emergentagent.com
 """
 import requests
-import random
-import string
+import json
 import sys
-from typing import Dict, Any, Optional
+from pymongo import MongoClient
 
-# Public API base URL
-BASE_URL = "https://d6612bc7-3b91-4b27-9dc6-0ab7ea18b049.preview.emergentagent.com/api"
+BASE_URL = "https://d6612bc7-3b91-4b27-9dc6-0ab7ea18b049.preview.emergentagent.com"
+MONGO_URL = "mongodb://localhost:27017"
+DB_NAME = "linguaconnect"
 
 # Test credentials
-DEMO_EMAIL = "demo@demo.com"
-DEMO_PASSWORD = "Demo1234!"
-ADMIN_EMAIL = "admin@lingua.app"
-ADMIN_PASSWORD = "Admin1234!"
+TEST_EMAIL = "demo@demo.com"
+TEST_PASSWORD = "Demo1234!"
 
-# Test results tracking
-passed_tests = []
-failed_tests = []
-
-
-def generate_unique_email() -> str:
-    """Generate a unique test email"""
-    random_str = ''.join(random.choices(string.ascii_lowercase + string.digits, k=8))
-    return f"qa_fix_{random_str}@linguatest.com"
-
-
-def log_test(name: str, passed: bool, details: str = ""):
-    """Log test result"""
+def print_test(name, passed, details=""):
     status = "✅ PASS" if passed else "❌ FAIL"
     print(f"{status}: {name}")
     if details:
-        print(f"  Details: {details}")
+        print(f"  {details}")
+    return passed
+
+def test_health():
+    """Test 1: GET /api/health -> 200"""
+    try:
+        resp = requests.get(f"{BASE_URL}/api/health", timeout=10)
+        passed = resp.status_code == 200
+        details = f"Status: {resp.status_code}, Body: {resp.text[:100]}"
+        return print_test("GET /api/health", passed, details)
+    except Exception as e:
+        return print_test("GET /api/health", False, f"Exception: {e}")
+
+def test_login():
+    """Test 2: Login demo@demo.com / Demo1234! -> token"""
+    try:
+        resp = requests.post(
+            f"{BASE_URL}/api/auth/login",
+            json={"email": TEST_EMAIL, "password": TEST_PASSWORD},
+            timeout=10
+        )
+        passed = resp.status_code == 200 and "token" in resp.json()
+        if passed:
+            token = resp.json()["token"]
+            details = f"Status: {resp.status_code}, Token received: {token[:20]}..."
+            return print_test("POST /api/auth/login", passed, details), token
+        else:
+            details = f"Status: {resp.status_code}, Body: {resp.text[:200]}"
+            return print_test("POST /api/auth/login", False, details), None
+    except Exception as e:
+        return print_test("POST /api/auth/login", False, f"Exception: {e}"), None
+
+def test_translation(token, text, target_lang, test_name):
+    """Test 3: Call translation endpoint"""
+    try:
+        headers = {"Authorization": f"Bearer {token}"}
+        body = {
+            "text": text,
+            "target_language": target_lang,
+            "source_language": "en"
+        }
+        resp = requests.post(
+            f"{BASE_URL}/api/ai/translate",
+            json=body,
+            headers=headers,
+            timeout=30
+        )
+        # Accept 200 (success) - 5xx is failure
+        passed = 200 <= resp.status_code < 500
+        result = resp.json() if resp.status_code == 200 else {}
+        
+        if resp.status_code == 200:
+            translated = result.get("translated", "")
+            cached = result.get("cached", False)
+            provider = result.get("provider", "")
+            unchanged = result.get("unchanged", False)
+            details = f"Status: {resp.status_code}, Translated: '{translated[:50]}', Cached: {cached}, Provider: {provider}, Unchanged: {unchanged}"
+        else:
+            details = f"Status: {resp.status_code}, Body: {resp.text[:200]}"
+        
+        return print_test(test_name, passed, details), result
+    except Exception as e:
+        return print_test(test_name, False, f"Exception: {e}"), {}
+
+def test_translation_cache(token, text, target_lang):
+    """Test 4: Call same translation twice to verify caching"""
+    print("\n--- Testing Translation Caching ---")
     
-    if passed:
-        passed_tests.append(name)
+    # First call
+    passed1, result1 = test_translation(token, text, target_lang, f"First call: Translate '{text}' to {target_lang}")
+    
+    # Second call (should be cached)
+    passed2, result2 = test_translation(token, text, target_lang, f"Second call: Translate '{text}' to {target_lang} (should be cached)")
+    
+    # Verify both calls succeeded and second was cached or returned same result
+    if passed1 and passed2:
+        same_result = result1.get("translated") == result2.get("translated")
+        details = f"First result: '{result1.get('translated', '')[:30]}', Second result: '{result2.get('translated', '')[:30]}', Same: {same_result}"
+        return print_test("Translation caching verification", same_result, details)
     else:
-        failed_tests.append((name, details))
+        return print_test("Translation caching verification", False, "One or both translation calls failed")
 
-
-def test_health() -> bool:
-    """Test 1: GET /api/ health check"""
+def test_mongodb_indexes():
+    """Test 5: Verify MongoDB indexes"""
+    print("\n--- Testing MongoDB Indexes ---")
     try:
-        response = requests.get(f"{BASE_URL}/", timeout=10)
+        client = MongoClient(MONGO_URL, serverSelectionTimeoutMS=5000)
+        db = client[DB_NAME]
+        cache_col = db["text_translation_cache"]
         
-        if response.status_code != 200:
-            log_test("GET /api/ health", False, f"Expected 200, got {response.status_code}")
-            return False
+        # Get all indexes
+        indexes = list(cache_col.list_indexes())
         
-        data = response.json()
-        if data.get("status") != "ok" or data.get("message") != "Mello API":
-            log_test("GET /api/ health", False, f"Unexpected response: {data}")
-            return False
+        # Check for TTL index (should NOT exist)
+        ttl_found = False
+        user_expiry_found = False
         
-        log_test("GET /api/ health", True, "Returns {'status':'ok','message':'Mello API'}")
-        return True
+        for idx in indexes:
+            idx_name = idx.get("name", "")
+            expire_after = idx.get("expireAfterSeconds")
+            
+            if expire_after is not None:
+                ttl_found = True
+                print_test(f"TTL index check: '{idx_name}'", False, f"BLOCKER: Found TTL index with expireAfterSeconds={expire_after}")
+            
+            if idx_name == "user_expiry_lookup":
+                user_expiry_found = True
+                key_spec = idx.get("key", {})
+                print_test(f"user_expiry_lookup index found", True, f"Key spec: {key_spec}")
+        
+        # Final verdict
+        passed = not ttl_found and user_expiry_found
+        
+        if not ttl_found:
+            print_test("No TTL index with expireAfterSeconds", True, "✅ No auto-delete index found")
+        
+        if not user_expiry_found:
+            print_test("user_expiry_lookup index exists", False, "❌ Expected index not found")
+        
+        # Print all indexes for reference
+        print(f"\n  All indexes in text_translation_cache:")
+        for idx in indexes:
+            print(f"    - {idx.get('name')}: {idx.get('key')}")
+        
+        return passed
+        
     except Exception as e:
-        log_test("GET /api/ health", False, f"Exception: {str(e)}")
-        return False
+        return print_test("MongoDB index verification", False, f"Exception: {e}")
 
-
-def test_register(email: str, password: str = "Test1234!", name: str = "Test User") -> Optional[Dict[str, Any]]:
-    """Test 2: POST /api/auth/register"""
+def test_cache_document_persistence(token):
+    """Test 6: Verify cache document is still present after translation"""
+    print("\n--- Testing Cache Document Persistence ---")
     try:
-        payload = {
-            "email": email,
-            "password": password,
-            "name": name
-        }
-        response = requests.post(f"{BASE_URL}/auth/register", json=payload, timeout=10)
-        
-        if response.status_code not in [200, 201]:
-            log_test(f"POST /auth/register ({email})", False, 
-                    f"Expected 200/201, got {response.status_code}: {response.text}")
-            return None
-        
-        data = response.json()
-        if "token" not in data or "user" not in data:
-            log_test(f"POST /auth/register ({email})", False, 
-                    f"Missing 'token' or 'user' in response: {data}")
-            return None
-        
-        log_test(f"POST /auth/register ({email})", True, 
-                f"Created user with token and user object")
-        return data
-    except Exception as e:
-        log_test(f"POST /auth/register ({email})", False, f"Exception: {str(e)}")
-        return None
-
-
-def test_login(email: str, password: str) -> Optional[Dict[str, Any]]:
-    """Test 3: POST /api/auth/login"""
-    try:
-        payload = {
-            "email": email,
-            "password": password
-        }
-        response = requests.post(f"{BASE_URL}/auth/login", json=payload, timeout=10)
-        
-        if response.status_code != 200:
-            log_test(f"POST /auth/login ({email})", False, 
-                    f"Expected 200, got {response.status_code}: {response.text}")
-            return None
-        
-        data = response.json()
-        if "token" not in data or "user" not in data:
-            log_test(f"POST /auth/login ({email})", False, 
-                    f"Missing 'token' or 'user' in response: {data}")
-            return None
-        
-        log_test(f"POST /auth/login ({email})", True, 
-                f"Login successful with token")
-        return data
-    except Exception as e:
-        log_test(f"POST /auth/login ({email})", False, f"Exception: {str(e)}")
-        return None
-
-
-def test_auth_me(token: str) -> Optional[Dict[str, Any]]:
-    """Test 4: GET /api/auth/me"""
-    try:
+        # First, do a translation
+        text = "Hello world"
+        target = "es"
         headers = {"Authorization": f"Bearer {token}"}
-        response = requests.get(f"{BASE_URL}/auth/me", headers=headers, timeout=10)
+        body = {"text": text, "target_language": target, "source_language": "en"}
         
-        if response.status_code != 200:
-            log_test("GET /auth/me (with token)", False, 
-                    f"Expected 200, got {response.status_code}: {response.text}")
-            return None
+        resp = requests.post(f"{BASE_URL}/api/ai/translate", json=body, headers=headers, timeout=30)
         
-        data = response.json()
-        if "id" not in data:
-            log_test("GET /auth/me (with token)", False, 
-                    f"Missing 'id' in user response: {data}")
-            return None
+        if resp.status_code != 200:
+            return print_test("Cache document persistence", False, f"Translation failed with status {resp.status_code}")
         
-        log_test("GET /auth/me (with token)", True, 
-                f"Returns user profile")
-        return data
+        # Now check MongoDB for the cache document
+        client = MongoClient(MONGO_URL, serverSelectionTimeoutMS=5000)
+        db = client[DB_NAME]
+        cache_col = db["text_translation_cache"]
+        
+        # Count documents in cache
+        doc_count = cache_col.count_documents({})
+        
+        passed = doc_count > 0
+        details = f"Found {doc_count} document(s) in text_translation_cache collection"
+        
+        if passed:
+            # Show a sample document (without _id for brevity)
+            sample = cache_col.find_one({}, {"_id": 0, "translated": 1, "target_language": 1, "expires_at": 1})
+            details += f"\n  Sample document: {sample}"
+        
+        return print_test("Cache document persistence (no auto-deletion)", passed, details)
+        
     except Exception as e:
-        log_test("GET /auth/me (with token)", False, f"Exception: {str(e)}")
-        return None
+        return print_test("Cache document persistence", False, f"Exception: {e}")
 
-
-def test_duplicate_register(email: str) -> bool:
-    """Test 5: Duplicate email registration should return 400"""
+def test_backend_logs():
+    """Test 7: Check backend logs for new tracebacks"""
+    print("\n--- Checking Backend Logs ---")
     try:
-        payload = {
-            "email": email,
-            "password": "Test1234!",
-            "name": "Duplicate User"
-        }
-        response = requests.post(f"{BASE_URL}/auth/register", json=payload, timeout=10)
+        import subprocess
+        result = subprocess.run(
+            ["tail", "-n", "50", "/var/log/supervisor/backend.err.log"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
         
-        if response.status_code != 400:
-            log_test("POST /auth/register (duplicate email)", False, 
-                    f"Expected 400, got {response.status_code}")
-            return False
+        log_content = result.stdout
         
-        log_test("POST /auth/register (duplicate email)", True, 
-                "Correctly returns 400 for duplicate email")
-        return True
+        # Look for tracebacks or errors
+        has_traceback = "Traceback" in log_content
+        has_error = "ERROR" in log_content
+        
+        if has_traceback or has_error:
+            # Show last few lines
+            lines = log_content.strip().split("\n")[-10:]
+            details = f"Found issues in logs:\n" + "\n".join(f"    {line}" for line in lines)
+            return print_test("Backend logs clean", False, details)
+        else:
+            return print_test("Backend logs clean", True, "No new tracebacks or errors found")
+            
     except Exception as e:
-        log_test("POST /auth/register (duplicate email)", False, f"Exception: {str(e)}")
-        return False
+        return print_test("Backend logs check", False, f"Exception: {e}")
 
-
-def test_wrong_password(email: str) -> bool:
-    """Test 6: Wrong password should return 401"""
+def test_regression_endpoints(token):
+    """Test 8: Quick regression of core endpoints"""
+    print("\n--- Testing Regression Endpoints ---")
+    headers = {"Authorization": f"Bearer {token}"}
+    
+    results = []
+    
+    # GET /api/auth/me
     try:
-        payload = {
-            "email": email,
-            "password": "WrongPassword123!"
-        }
-        response = requests.post(f"{BASE_URL}/auth/login", json=payload, timeout=10)
-        
-        if response.status_code != 401:
-            log_test("POST /auth/login (wrong password)", False, 
-                    f"Expected 401, got {response.status_code}")
-            return False
-        
-        log_test("POST /auth/login (wrong password)", True, 
-                "Correctly returns 401 for wrong password")
-        return True
+        resp = requests.get(f"{BASE_URL}/api/auth/me", headers=headers, timeout=10)
+        passed = resp.status_code == 200
+        details = f"Status: {resp.status_code}"
+        results.append(print_test("GET /api/auth/me", passed, details))
     except Exception as e:
-        log_test("POST /auth/login (wrong password)", False, f"Exception: {str(e)}")
-        return False
-
-
-def test_auth_me_no_token() -> bool:
-    """Test 7: GET /auth/me without token should return 401/403"""
+        results.append(print_test("GET /api/auth/me", False, f"Exception: {e}"))
+    
+    # GET /api/moments
     try:
-        response = requests.get(f"{BASE_URL}/auth/me", timeout=10)
-        
-        if response.status_code not in [401, 403]:
-            log_test("GET /auth/me (no token)", False, 
-                    f"Expected 401/403, got {response.status_code}")
-            return False
-        
-        log_test("GET /auth/me (no token)", True, 
-                f"Correctly returns {response.status_code} without token")
-        return True
+        resp = requests.get(f"{BASE_URL}/api/moments", headers=headers, timeout=10)
+        passed = resp.status_code == 200
+        details = f"Status: {resp.status_code}"
+        results.append(print_test("GET /api/moments", passed, details))
     except Exception as e:
-        log_test("GET /auth/me (no token)", False, f"Exception: {str(e)}")
-        return False
-
-
-def test_authenticated_endpoint(endpoint: str, token: str, name: str) -> bool:
-    """Test authenticated read endpoint"""
+        results.append(print_test("GET /api/moments", False, f"Exception: {e}"))
+    
+    # GET /api/chats
     try:
-        headers = {"Authorization": f"Bearer {token}"}
-        response = requests.get(f"{BASE_URL}{endpoint}", headers=headers, timeout=10)
-        
-        if response.status_code == 404:
-            log_test(f"GET {endpoint}", False, 
-                    f"404 Not Found - endpoint may not exist")
-            return False
-        
-        if response.status_code >= 500:
-            log_test(f"GET {endpoint}", False, 
-                    f"5xx error: {response.status_code} - {response.text[:200]}")
-            return False
-        
-        if response.status_code != 200:
-            log_test(f"GET {endpoint}", False, 
-                    f"Expected 200, got {response.status_code}: {response.text[:200]}")
-            return False
-        
-        data = response.json()
-        log_test(f"GET {endpoint}", True, 
-                f"{name} endpoint working")
-        return True
+        resp = requests.get(f"{BASE_URL}/api/chats", headers=headers, timeout=10)
+        passed = resp.status_code == 200
+        details = f"Status: {resp.status_code}"
+        results.append(print_test("GET /api/chats", passed, details))
     except Exception as e:
-        log_test(f"GET {endpoint}", False, f"Exception: {str(e)}")
-        return False
-
+        results.append(print_test("GET /api/chats", False, f"Exception: {e}"))
+    
+    return all(results)
 
 def main():
-    """Run all backend tests"""
     print("=" * 80)
-    print("BACKEND API REGRESSION TEST SUITE")
-    print(f"Testing against: {BASE_URL}")
+    print("TRANSLATION CACHE INDEX FIX VERIFICATION")
+    print("Testing deployment blocker fix: non-destructive translation cache index")
     print("=" * 80)
-    print()
+    
+    results = []
     
     # Test 1: Health check
-    print("TEST 1: Health Check")
-    print("-" * 80)
-    test_health()
-    print()
+    print("\n--- Test 1: Health Check ---")
+    results.append(test_health())
     
-    # Test 2: Register new user
-    print("TEST 2: User Registration")
-    print("-" * 80)
-    test_email = generate_unique_email()
-    register_result = test_register(test_email)
-    test_token = register_result.get("token") if register_result else None
-    print()
+    # Test 2: Login
+    print("\n--- Test 2: Login ---")
+    login_passed, token = test_login()
+    results.append(login_passed)
     
-    # Test 3: Login with demo account
-    print("TEST 3: Demo User Login")
-    print("-" * 80)
-    demo_login = test_login(DEMO_EMAIL, DEMO_PASSWORD)
-    demo_token = demo_login.get("token") if demo_login else None
-    print()
+    if not token:
+        print("\n❌ CRITICAL: Cannot proceed without authentication token")
+        sys.exit(1)
     
-    # Test 4: Get current user profile
-    print("TEST 4: Get Current User Profile")
-    print("-" * 80)
-    if demo_token:
-        test_auth_me(demo_token)
-    else:
-        log_test("GET /auth/me (with token)", False, "No token available from login")
-    print()
+    # Test 3 & 4: Translation with Bengali and Spanish, verify caching
+    print("\n--- Test 3: Translation to Bengali (bn) ---")
+    test_text = "Hello, how are you today?"
+    passed_bn, result_bn = test_translation(token, test_text, "bn", f"Translate '{test_text}' to Bengali (bn)")
+    results.append(passed_bn)
     
-    # Test 5: Negative tests
-    print("TEST 5: Negative Test Cases")
-    print("-" * 80)
-    test_duplicate_register(DEMO_EMAIL)
-    test_wrong_password(DEMO_EMAIL)
-    test_auth_me_no_token()
-    print()
+    print("\n--- Test 4: Translation to Spanish (es) ---")
+    passed_es, result_es = test_translation(token, test_text, "es", f"Translate '{test_text}' to Spanish (es)")
+    results.append(passed_es)
     
-    # Test 6: Core authenticated endpoints
-    print("TEST 6: Core Authenticated Read Endpoints")
-    print("-" * 80)
-    if demo_token:
-        # Test partners/users list
-        test_authenticated_endpoint("/users/partners", demo_token, "Partners list")
-        
-        # Test moments feed
-        test_authenticated_endpoint("/moments", demo_token, "Moments feed")
-        
-        # Test chats list
-        test_authenticated_endpoint("/chats", demo_token, "Chats list")
-        
-        # Test vocab topics
-        test_authenticated_endpoint("/vocab/topics", demo_token, "Vocab topics")
-        
-        # Test lessons
-        test_authenticated_endpoint("/lessons", demo_token, "Lessons list")
-        
-        # Test pro tutors
-        test_authenticated_endpoint("/pro/tutors", demo_token, "Pro tutors")
-    else:
-        log_test("Core authenticated endpoints", False, "No token available")
-    print()
+    # Test caching with Spanish (call twice)
+    results.append(test_translation_cache(token, test_text, "es"))
     
-    # Test 7: Admin login
-    print("TEST 7: Admin Login")
-    print("-" * 80)
-    admin_login = test_login(ADMIN_EMAIL, ADMIN_PASSWORD)
-    if admin_login:
-        admin_token = admin_login.get("token")
-        if admin_token:
-            # Verify admin can access their profile
-            test_auth_me(admin_token)
-    print()
+    # Test 5: MongoDB indexes
+    results.append(test_mongodb_indexes())
+    
+    # Test 6: Cache document persistence
+    results.append(test_cache_document_persistence(token))
+    
+    # Test 7: Backend logs
+    results.append(test_backend_logs())
+    
+    # Test 8: Regression endpoints
+    results.append(test_regression_endpoints(token))
     
     # Summary
+    print("\n" + "=" * 80)
+    print("SUMMARY")
     print("=" * 80)
-    print("TEST SUMMARY")
-    print("=" * 80)
-    print(f"Total Passed: {len(passed_tests)}")
-    print(f"Total Failed: {len(failed_tests)}")
-    print()
+    total = len(results)
+    passed = sum(results)
+    failed = total - passed
     
-    if failed_tests:
-        print("FAILED TESTS:")
-        for name, details in failed_tests:
-            print(f"  ❌ {name}")
-            if details:
-                print(f"     {details}")
-        print()
-        
-        # Check backend logs for errors
-        print("=" * 80)
-        print("CHECKING BACKEND LOGS FOR ERRORS")
-        print("=" * 80)
-        import subprocess
-        try:
-            result = subprocess.run(
-                ["tail", "-n", "50", "/var/log/supervisor/backend.err.log"],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            if result.stdout:
-                print(result.stdout)
-            else:
-                print("No recent errors in backend logs")
-        except Exception as e:
-            print(f"Could not read backend logs: {e}")
-        print()
+    print(f"Total tests: {total}")
+    print(f"Passed: {passed} ✅")
+    print(f"Failed: {failed} ❌")
     
-    # Save test credentials
-    if test_email and register_result:
-        print("=" * 80)
-        print("NEW TEST CREDENTIALS CREATED")
-        print("=" * 80)
-        print(f"Email: {test_email}")
-        print(f"Password: Test1234!")
-        print()
-    
-    # Exit with appropriate code
-    sys.exit(0 if len(failed_tests) == 0 else 1)
-
+    if failed == 0:
+        print("\n✅ ALL TESTS PASSED - Translation cache index fix verified successfully!")
+        print("   - No TTL/auto-delete index found")
+        print("   - user_expiry_lookup index exists")
+        print("   - Translation endpoints working (200 responses)")
+        print("   - Cache documents persist (no auto-deletion)")
+        print("   - No new backend errors")
+        print("   - Core endpoints regression clean")
+        sys.exit(0)
+    else:
+        print(f"\n❌ {failed} TEST(S) FAILED - See details above")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

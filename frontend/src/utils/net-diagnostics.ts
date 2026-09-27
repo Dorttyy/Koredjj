@@ -52,6 +52,25 @@ export const hostOf = (url?: string | null): string => {
 };
 
 /**
+ * `true` when the host can only ever exist on the build machine / workspace:
+ * an Emergent preview host, an Expo tunnel, a loopback address or a bare LAN
+ * IP. An installed APK/IPA baked with one of these can never reach a server
+ * from a real phone, so the failure must be reported as a build/deploy
+ * configuration problem instead of blaming the user's mobile data.
+ */
+export const isEphemeralHost = (url?: string | null): boolean => {
+  const host = hostOf(url).toLowerCase();
+  if (!host || host === "unknown host") return false;
+  return (
+    /\.preview\.emergentagent\.com(:\d+)?$/.test(host) ||
+    /\.ngrok(-free)?\.(app|io|dev)(:\d+)?$/.test(host) ||
+    /\.exp\.direct(:\d+)?$/.test(host) ||
+    /^(localhost|127\.0\.0\.1|0\.0\.0\.0|10\.0\.2\.2)(:\d+)?$/.test(host) ||
+    /^\d{1,3}(\.\d{1,3}){3}(:\d+)?$/.test(host)
+  );
+};
+
+/**
  * `true` = device believes it has internet, `false` = definitely offline,
  * `null` = could not determine (never treat `null` as offline).
  */
@@ -82,6 +101,11 @@ export const messageFor = (kind: NetFailureKind, baseUrl?: string): string => {
       return "The server is taking too long to respond. Please try again.";
     case "unreachable":
     default:
+      // A standalone build baked with a workspace-only host is a publish
+      // problem, not a connectivity problem — say so exactly.
+      if (Platform.OS !== "web" && isEphemeralHost(baseUrl)) {
+        return `This build was made with a temporary preview server address (${hostOf(baseUrl)}), which a phone can never reach. Deploy the app first, then install a fresh build.`;
+      }
       return `Can't reach the server (${hostOf(baseUrl)}). It may be down or not deployed yet — please try again shortly.`;
   }
 };

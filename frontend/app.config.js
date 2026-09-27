@@ -117,6 +117,29 @@ module.exports = ({ config }) => {
             }
           } catch {}
         }
+        // Loud build-log guard: a native binary baked with a workspace-only
+        // host (preview/tunnel/localhost/LAN IP) can never reach a server from
+        // a real phone -> users would see "Can't reach the server". The managed
+        // publish pipeline normally rewrites EXPO_PUBLIC_BACKEND_URL to the
+        // deployed https://<app>.emergent.host value; if that did not happen we
+        // must not fail silently.
+        const host = String(u).replace(/^https?:\/\//, "").replace(/\/.*$/, "").toLowerCase();
+        const ephemeral =
+          !!host &&
+          (/\.preview\.emergentagent\.com(:\d+)?$/.test(host) ||
+            /\.ngrok(-free)?\.(app|io|dev)(:\d+)?$/.test(host) ||
+            /\.exp\.direct(:\d+)?$/.test(host) ||
+            /^(localhost|127\.0\.0\.1|0\.0\.0\.0|10\.0\.2\.2)(:\d+)?$/.test(host) ||
+            /^\d{1,3}(\.\d{1,3}){3}(:\d+)?$/.test(host));
+        if (!u) {
+          console.warn(
+            "[app.config] EXPO_PUBLIC_BACKEND_URL is EMPTY — a native build made now would have no server address. Deploy the app (Publish) before building the APK/IPA.",
+          );
+        } else if (ephemeral) {
+          console.warn(
+            `[app.config] EXPO_PUBLIC_BACKEND_URL points at the temporary workspace host "${host}". That is fine for the web preview and Expo Go on the same network, but an installed APK/IPA built with it can NEVER reach the server. Deploy the app (Publish) so the pipeline injects the permanent *.emergent.host URL before building a binary.`,
+          );
+        }
         return u;
       })(),
       revenueCat: {
