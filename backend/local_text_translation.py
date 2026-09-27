@@ -34,6 +34,14 @@ def supported_languages() -> set[str]:
 SUPPORTED = supported_languages()
 
 
+def refresh_supported() -> set[str]:
+    """Re-read the vocabulary after the weights are provisioned at runtime, so a
+    container that started without the model can use it without a restart."""
+    global SUPPORTED
+    SUPPORTED = supported_languages()
+    return SUPPORTED
+
+
 def model_code(code: str) -> str:
     return "zh" if code.startswith("zh") else "pt" if code == "pt-BR" else code
 

@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel
 
 from db import db
+import free_translation_api
 import local_text_translation
 
 CACHE_VERSION = "m2m100-local-v4-original-fallback"
@@ -50,13 +51,44 @@ async def shutdown():
 
 
 async def provider_translate(text: str, source: str, target: str) -> tuple[str, str]:
+    """Free translation chain — no API key, no paid provider, never a dead end.
+
+    1. Bundled offline M2M100 model: free and unlimited, but needs its weights
+       on disk (a fresh container / fork starts without them).
+    2. MyMemory free public API: no key, covers us while the weights are missing
+       or when the offline model does not know the requested language pair.
+
+    Only when BOTH routes are unavailable do we surface a retryable failure.
+    """
+    local_failed = False
     try:
-        return await local_text_translation.translate(text, source, target)
+        value, detected = await local_text_translation.translate(text, source, target)
+        if value != text:
+            return value, detected
+        # The local model echoed the input. That is the right answer when there
+        # is nothing to translate (no letters) or the text already is in the
+        # target language; otherwise the pair is unsupported locally and the
+        # free online provider gets a turn.
+        if not any(char.isalpha() for char in text):
+            return value, detected
+        if detected and local_text_translation.model_code(detected) == local_text_translation.model_code(target):
+            return value, detected
     except ValueError:
         raise
     except Exception:
-        logger.exception("Local text translation failed (message content omitted)")
-        raise TranslationFailure(3) from None
+        local_failed = True
+        logger.warning("Offline translation unavailable; trying the free online provider")
+
+    try:
+        return await free_translation_api.translate(text, source, target)
+    except Exception:
+        logger.exception("Free online translation failed (message content omitted)")
+
+    if not local_failed:
+        # Offline model ran fine but cannot do this pair: keep the agreed policy
+        # of returning the original text instead of an error.
+        return text, source
+    raise TranslationFailure(3)
 
 
 async def translate(user_id: str, text: str, source: str, target: str) -> TranslationResult:

@@ -36,6 +36,7 @@ from routes.room_stage import router as room_stage_router  # noqa: E402
 from routes.room_moderators import router as room_moderators_router  # noqa: E402
 import rtc_core  # noqa: E402
 import room_time  # noqa: E402
+import model_provisioning  # noqa: E402
 import translation_service  # noqa: E402
 from routes.pro import router as pro_router, seed_pro_tutors  # noqa: E402
 from routes.lessons import router as lessons_router  # noqa: E402
@@ -63,13 +64,20 @@ async def lifespan(app: FastAPI):
     await seed_vocab_content()
     await room_time.initialize()
     await translation_service.initialize()
+    # Free offline models are ~600 MB and are not in the repo, so a fresh
+    # container self-heals in the background. Translation keeps working through
+    # the free online provider while this runs.
+    model_task = asyncio.create_task(model_provisioning.ensure_background())
     quota_task = asyncio.create_task(room_time.watchdog())
     try:
         yield
     finally:
         quota_task.cancel()
+        model_task.cancel()
         with suppress(asyncio.CancelledError):
             await quota_task
+        with suppress(asyncio.CancelledError):
+            await model_task
         await translation_service.shutdown()
         client.close()
 

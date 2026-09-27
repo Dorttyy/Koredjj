@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from auth_utils import CurrentUser
+import caption_engine
 from config_utils import get_app_config
 from db import audio_col, media_col, users_col
 from models import CorrectRequest, TranscribeRequest, TranslateRequest, _vip_active
@@ -309,13 +310,23 @@ _whisper_model = None
 
 
 def _get_whisper():
-    """Lazily load a tiny CPU Whisper model (int8). Cached across requests."""
+    """Lazily load a free CPU Whisper model (int8), cached across requests.
+
+    Prefers the locally provisioned `caption_models/speech` weights (already on
+    disk for call captions, no download); otherwise falls back to the small
+    public `tiny` model, which faster-whisper fetches once and caches. Both
+    routes are free and need no API key.
+    """
     global _whisper_model
     if _whisper_model is None:
         try:
             from faster_whisper import WhisperModel
-            _whisper_model = WhisperModel("tiny", device="cpu", compute_type="int8")
-        except (ImportError, Exception) as e:
+
+            local_dir = caption_engine.ROOT / "speech"
+            source = str(local_dir) if (local_dir / "model.bin").is_file() else "tiny"
+            _whisper_model = WhisperModel(source, device="cpu", compute_type="int8")
+            logger.info("Loaded free speech-to-text model from %s", source)
+        except Exception as e:
             logger.warning("Whisper model unavailable: %s", e)
             return None
     return _whisper_model
