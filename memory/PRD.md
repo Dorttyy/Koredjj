@@ -1,5 +1,19 @@
 # PRD — Mello (previously LinguaConnect)
 
+## 2026-06 — ROOT CAUSE FIX: production APK "Can't reach the server" (CURRENT)
+- **Root cause (confirmed, two layers):**
+  1. `frontend/eas.json` hardcoded `env.EXPO_PUBLIC_BACKEND_URL = https://<workspace>.preview.emergentagent.com` in ALL build profiles. An EAS build-profile `env` block has the HIGHEST precedence, so it OVERRODE the publish pipeline's production URL rewrite → every APK was baked with the ephemeral preview host (changes each fork, dies when the workspace sleeps) → device-side DNS/connect failure → RN `Network request failed` → UI text "Can't reach the server".
+  2. `src/utils/api.ts` had the same preview URL hardcoded as a runtime fallback (line 20).
+  3. The URL the pipeline would inject per earlier notes, `https://app-release-ready-4.emergent.host`, currently answers **400 "Application not found"** → there is no live deployment, so even a correct APK has no server until the user deploys (Publish → Deploy) BEFORE building the APK.
+- **Fixes:** DELETED `frontend/eas.json` (let the managed pipeline own EAS config + env injection, also a deployment-agent blocker). `getApiUrl()` now resolves ONLY `EXPO_PUBLIC_BACKEND_URL` → `Constants.expoConfig.extra.backendUrl` → (web) `window.location.origin`, skips localhost/127.0.0.1/0.0.0.0/10.0.2.2 on native, returns "" when unset (never a hardcoded host again).
+- New `src/utils/net-diagnostics.ts`: `ApiError` (kinds `http | no-backend-url | offline | timeout | unreachable`), `deviceHasInternet()` via **expo-network** (new dep, `~57.0.2`), `checkBackendHealth(baseUrl)` against `/api/health`, honest per-kind copy. `api.ts` classifies failures with it; `auth.tsx` no longer flattens every error into "check your connection" and shows an inline "Try again" (testID `auth-retry-btn`) only for transport errors; `onboarding.tsx` surfaces the precise message.
+- `NetworkContext` recovery probe switched `/api/auth/me` → `/api/health` (unauthenticated, any 2xx-4xx = reachable).
+- New DEV-ONLY route `app/dev-diagnostics.tsx` (bounces to `/` when `!__DEV__`): base URL + its source, host, scheme, platform, device internet, `/api/health` status + latency, session-token presence (never the token).
+- `app.json`: added `ios.infoPlist.NSCameraUsageDescription` (WebRTC video calls — App Store blocker).
+- Verified: tsc 0 errors, eslint clean, backend 9/9 pytest (`backend/tests/test_iteration55_auth_regression.py`), frontend regression by testing agent (signup→onboarding→connect, login, wrong password/duplicate email copy, all authed tabs, diagnostics screen) — no regressions.
+- **Still required from user:** deploy the backend so a permanent `*.emergent.host` URL exists, then build the APK.
+
+
 ## 2026-09-19 — publish readiness after fresh fork (CURRENT)
 - Fork had LOST backend/.env + frontend/.env (root .gitignore ignores *.env) → backend crashed (KeyError MONGO_URL). Recreated both: backend (MONGO_URL local, DB_NAME linguaconnect, NEW JWT_SECRET, CORS *, EMERGENT_LLM_KEY, EMERGENT_PUSH_KEY placeholder); frontend (EXPO_PUBLIC_BACKEND_URL/EXPO_PACKAGER_* = preview URL, EXPO_TUNNEL_SUBDOMAIN, EXPO_USE_FAST_RESOLVER). RevenueCat public keys were NOT recoverable (lost with .env) — /vip paywall will show setup-unavailable until user re-supplies EXPO_PUBLIC_REVENUECAT_* keys.
 - Local Mongo was empty: admin seeded on startup; ran `python backend/seed.py` (9 demo users + 6 moments, Demo1234!). QA accounts in memory/test_credentials.md.

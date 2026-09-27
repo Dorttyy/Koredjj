@@ -115,12 +115,13 @@ export default function Onboarding() {
       setUser(updated);
       router.replace("/(tabs)/connect");
     } catch (e) {
+      // `api` already returns a precise message (offline / server unreachable /
+      // timeout / unconfigured build), so surface it as-is rather than
+      // replacing every failure with "check your connection".
       const raw = e instanceof Error ? e.message : "Something went wrong";
-      if (/network|fetch|reach the server/i.test(raw)) {
-        setError("Can't reach the server. Please check your connection and try again.");
-      } else {
-        setError(raw);
-      }
+      setError(/^network request failed$/i.test(raw.trim())
+        ? "Can't reach the server right now. Please try again."
+        : raw);
     } finally {
       setBusy(false);
     }

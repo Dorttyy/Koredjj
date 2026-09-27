@@ -2,6 +2,9 @@
 /* global __dirname */
 const fs = require("fs");
 const path = require("path");
+try {
+  require("dotenv").config({ path: path.resolve(__dirname, ".env") });
+} catch {}
 
 /**
  * Resolve the Firebase `google-services.json` that should be bundled into the
@@ -102,7 +105,20 @@ module.exports = ({ config }) => {
     android,
     extra: {
       ...config.extra,
-      backendUrl: process.env.EXPO_PUBLIC_BACKEND_URL || config.extra?.backendUrl || "",
+      backendUrl: (() => {
+        let u = process.env.EXPO_PUBLIC_BACKEND_URL || config.extra?.backendUrl || "";
+        if (!u) {
+          try {
+            const envP = path.resolve(__dirname, ".env");
+            if (fs.existsSync(envP)) {
+              const c = fs.readFileSync(envP, "utf8");
+              const m = c.match(/EXPO_PUBLIC_BACKEND_URL=["']?([^"'\r\n]+)/);
+              if (m && m[1]) u = m[1].trim();
+            }
+          } catch {}
+        }
+        return u;
+      })(),
       revenueCat: {
         testApiKey: process.env.EXPO_PUBLIC_REVENUECAT_TEST_API_KEY,
         iosApiKey: process.env.EXPO_PUBLIC_REVENUECAT_IOS_API_KEY,

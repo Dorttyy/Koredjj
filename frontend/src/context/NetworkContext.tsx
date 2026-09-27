@@ -56,18 +56,20 @@ export const NetworkProvider: React.FC<{ children: React.ReactNode }> = ({
       // Cannot probe without a valid host URL on native; avoid false offline flag.
       return;
     }
-    const targetUrl = baseUrl ? `${baseUrl}/api/auth/me` : "/api/auth/me";
+    // `/api/health` is unauthenticated, so reachability is measured without
+    // depending on a valid session.
+    const targetUrl = baseUrl ? `${baseUrl}/api/health` : "/api/health";
     try {
-      // Small race-safe timeout so an unreachable host doesn't hang forever.
+      // Small race-safe timeout so an unreachable host doesn't hang forever (12s for mobile latency).
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 6000);
+      const timer = setTimeout(() => controller.abort(), 12000);
       const res = await fetch(targetUrl, {
         method: "GET",
         signal: controller.signal,
       });
       clearTimeout(timer);
-      // 200 (authed) or 401 (unauthed) both prove the server is reachable.
-      if (res.status === 200 || res.status === 401) {
+      // Any HTTP answer (even 401/404) proves the host is reachable.
+      if (res.status >= 200 && res.status < 500) {
         failureRun.current = 0;
         setIsOnline(true);
       } else {

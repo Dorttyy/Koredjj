@@ -30,6 +30,7 @@ import { useAuth } from "@/src/context/AuthContext";
 import { useTheme } from "@/src/context/ThemeContext";
 import { fonts, spacing, ThemeColors } from "@/src/theme";
 import { GoogleGlyph } from "@/src/ui/GoogleGlyph";
+import { ApiError } from "@/src/utils/net-diagnostics";
 
 type FieldKey = "name" | "email" | "password";
 type Mode = "login" | "register";
@@ -45,6 +46,7 @@ export default function AuthScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [focused, setFocused] = useState<FieldKey | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [retryable, setRetryable] = useState(false);
   const [busy, setBusy] = useState(false);
   const [googleBusy, setGoogleBusy] = useState(false);
   const { login, register, signInWithGoogle, googleError, user } = useAuth();
@@ -119,8 +121,12 @@ export default function AuthScreen() {
       return "This email is already registered. Try logging in instead.";
     }
     if (/banned/i.test(raw)) return "This account has been suspended.";
-    if (/network|failed to fetch/i.test(raw)) {
-      return "Can't reach the server. Check your connection.";
+    // Transport failures already arrive with a precise, honest message from
+    // `src/utils/net-diagnostics.ts` (offline vs. server unreachable vs.
+    // timeout vs. unconfigured build) — never flatten them back into a generic
+    // "check your connection". Only third-party/raw fetch messages need help.
+    if (/^network request failed$|failed to fetch/i.test(raw.trim())) {
+      return "Can't reach the server right now. Please try again.";
     }
     return raw;
   };
@@ -129,6 +135,7 @@ export default function AuthScreen() {
   const submit = async () => {
     if (submitting.current) return;
     setError(null);
+    setRetryable(false);
     if (!email.trim()) return setError("Please enter your email.");
     if (!emailValid) return setError("Please enter a valid email address.");
     if (!password) return setError("Please enter your password.");
@@ -147,6 +154,9 @@ export default function AuthScreen() {
       // where the context user was already this account.
       if (routedFor.current === authedUser.id) routeAfterAuth(authedUser);
     } catch (e) {
+      // Connection-level failures are worth retrying in place; wrong password
+      // and friends are not.
+      setRetryable(e instanceof ApiError && e.kind !== "http");
       setError(humanizeError(e instanceof Error ? e.message : "Something went wrong"));
     } finally {
       submitting.current = false;
@@ -347,9 +357,22 @@ export default function AuthScreen() {
             {error && (
               <View style={styles.errorRow} accessibilityLiveRegion="polite">
                 <Ionicons name="alert-circle" size={15} color={colors.error} />
-                <Text testID="auth-error-text" style={styles.error}>
-                  {error}
-                </Text>
+                <View style={{ flex: 1, gap: 6 }}>
+                  <Text testID="auth-error-text" style={styles.error}>
+                    {error}
+                  </Text>
+                  {retryable && (
+                    <Pressable
+                      testID="auth-retry-btn"
+                      accessibilityRole="button"
+                      disabled={bothBusy}
+                      onPress={submit}
+                      hitSlop={8}
+                    >
+                      <Text style={styles.retryText}>Try again</Text>
+                    </Pressable>
+                  )}
+                </View>
               </View>
             )}
 
@@ -453,7 +476,8 @@ const makeStyles = (colors: ThemeColors) =>
     forgotText: { fontFamily: fonts.text, fontSize: 12, color: colors.onSurfaceSecondary, textDecorationLine: "underline" },
     hint: { fontFamily: fonts.text, fontSize: 11.5, lineHeight: 17, color: colors.onSurfaceSecondary, marginTop: 7, marginLeft: 4 },
     errorRow: { flexDirection: "row", alignItems: "flex-start", gap: 8, backgroundColor: `${colors.error}14`, borderRadius: 12, padding: 12, marginBottom: spacing.lg },
-    error: { flex: 1, fontFamily: fonts.textSemi, fontSize: 12.5, lineHeight: 19, color: colors.error },
+    error: { fontFamily: fonts.textSemi, fontSize: 12.5, lineHeight: 19, color: colors.error },
+    retryText: { fontFamily: fonts.textSemi, fontSize: 12.5, color: colors.brand, textDecorationLine: "underline" },
     submitWrap: { marginTop: spacing.xs, borderRadius: 999, overflow: "hidden", backgroundColor: colors.onSurface },
     submitBtn: { minHeight: 52, alignItems: "center", justifyContent: "center", paddingVertical: 15, paddingHorizontal: spacing.lg },
     submitText: { fontFamily: fonts.textBold, fontSize: 15, color: colors.surface },

@@ -1,18 +1,48 @@
 import { Platform } from "react-native";
 import Constants from "expo-constants";
+import {
+  ApiError,
+  deviceHasInternet,
+  makeNetError,
+} from "@/src/utils/net-diagnostics";
 
+/**
+ * Single source of truth for the backend base URL (REST + WebSockets + assets).
+ *
+ * Resolution order on native (standalone APK / IPA / dev client):
+ *   1. `process.env.EXPO_PUBLIC_BACKEND_URL` — inlined into the JS bundle at
+ *      build time. The publish pipeline rewrites this to the deployed
+ *      `https://<app>.emergent.host` URL, so production builds get it for free.
+ *   2. `Constants.expoConfig.extra.backendUrl` — the same value carried through
+ *      `app.config.js`, as a backup for runtimes where the inlined env var was
+ *      stripped (older manifests, OTA updates).
+ *
+ * NEVER hardcode a fallback here. Preview/dev hosts are ephemeral (they change
+ * on every workspace fork and go away when the workspace sleeps); an installed
+ * APK baked with one can never reach a server, which surfaces as the classic
+ * "Can't reach the server" on a real device. An empty string is returned
+ * instead so the failure is reported honestly as a misconfigured build.
+ * Loopback/LAN hosts are ignored on native for the same reason — a phone can
+ * never reach the build machine's localhost.
+ */
 export const getApiUrl = (): string => {
   // On web, always use window.location.origin so browser preview / subdomains / proxies never fail
   if (Platform.OS === "web" && typeof window !== "undefined" && window.location?.origin) {
     return window.location.origin.replace(/\/+$/, "");
   }
-  const envUrl = process.env.EXPO_PUBLIC_BACKEND_URL;
-  if (envUrl) {
-    return envUrl.replace(/\/+$/, "");
-  }
-  const extraUrl = Constants.expoConfig?.extra?.backendUrl;
-  if (extraUrl) {
-    return String(extraUrl).replace(/\/+$/, "");
+  const candidates = [
+    process.env.EXPO_PUBLIC_BACKEND_URL,
+    Constants.expoConfig?.extra?.backendUrl,
+    (Constants as any).manifest?.extra?.backendUrl,
+    (Constants as any).manifest2?.extra?.expoClient?.extra?.backendUrl,
+  ];
+  for (const candidate of candidates) {
+    const value = typeof candidate === "string" ? candidate.trim() : "";
+    if (!value) continue;
+    if (/^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|10\.0\.2\.2)(:|\/|$)/i.test(value)) {
+      continue;
+    }
+    return value.replace(/\/+$/, "");
   }
   return "";
 };
@@ -53,14 +83,16 @@ async function request<T>(
 ): Promise<T> {
   const baseUrl = getApiUrl();
   if (!baseUrl) {
-    throw new Error("Account services are unavailable right now. Please try again shortly.");
+    // No server address in this build — a configuration problem, not a
+    // connectivity problem. Say so instead of blaming the user's network.
+    throw makeNetError("no-backend-url");
   }
   // Hard network timeout so a stalled connection (common on flaky mobile
   // networks / unreachable host) can NEVER leave the UI hanging forever on a
   // spinner. Without this, fetch() waits indefinitely. On timeout we surface a
   // clear, retryable "can't reach the server" error instead of an infinite
   // loading state (e.g. the onboarding "Start Connecting" button).
-  const REQUEST_TIMEOUT_MS = 20000;
+  const REQUEST_TIMEOUT_MS = 30000;
   const controller = new AbortController();
   const external = options?.signal;
   const onExternalAbort = () => controller.abort();
@@ -79,21 +111,25 @@ async function request<T>(
       method,
       signal: controller.signal,
       headers: {
+        Accept: "application/json",
         "Content-Type": "application/json",
         ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
       },
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
   } catch (err) {
-    // Fetch throws only for network-level failures (DNS, offline, CORS) or an
-    // abort (our timeout, or the caller's own signal).
-    // Caller-initiated cancellation should propagate quietly; our timeout and
-    // real network errors should flip the offline indicator.
-    if (!external?.aborted) netFailureReporter();
-    if (timedOut) {
-      throw new Error("Can't reach the server. Check your connection.");
+    // Fetch throws only for network-level failures (DNS, offline, TLS, refused)
+    // or an abort (our timeout, or the caller's own signal).
+    // Caller-initiated cancellation must propagate quietly.
+    if (external?.aborted) {
+      throw err instanceof Error ? err : new Error("Request cancelled");
     }
-    throw err instanceof Error ? err : new Error("Network request failed");
+    netFailureReporter();
+    if (timedOut) throw makeNetError("timeout", baseUrl);
+    // RN reports every transport error as "Network request failed", so ask the
+    // OS whether the device is actually offline before choosing the message.
+    const online = await deviceHasInternet();
+    throw makeNetError(online === false ? "offline" : "unreachable", baseUrl);
   } finally {
     clearTimeout(timer);
     if (external) external.removeEventListener("abort", onExternalAbort);
@@ -108,9 +144,7 @@ async function request<T>(
     } catch {
       // keep default detail
     }
-    const err = new Error(detail) as Error & { status?: number };
-    err.status = res.status;
-    throw err;
+    throw new ApiError(detail, "http", { status: res.status, baseUrl });
   }
   return res.json();
 }

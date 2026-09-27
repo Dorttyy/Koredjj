@@ -14,6 +14,7 @@
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "Share photos from your gallery in chat",
         "NSMicrophoneUsageDescription": "Record voice messages and join voice rooms",
+        "NSCameraUsageDescription": "Make video calls with language partners",
         "NSBluetoothAlwaysUsageDescription": "Use Bluetooth headsets for calls",
         "UIBackgroundModes": [
           "audio",
@@ -23,6 +24,7 @@
       }
     },
     "android": {
+      "usesCleartextTraffic": true,
       "icon": "./assets/images/android-icon.png",
       "softwareKeyboardLayoutMode": "resize",
       "googleServicesFile": "./google-services.json",
@@ -100,9 +102,6 @@
     ],
     "experiments": {
       "typedRoutes": true
-    },
-    "extra": {
-      "backendUrl": "https://gmail-notify-service.preview.emergentagent.com"
     }
   }
 }

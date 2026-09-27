@@ -1,0 +1,34 @@
+{
+  "summary": "Verified the api.ts + net-diagnostics + NetworkContext refactor. Backend regression 9/9 green (health, register, duplicate-email 400 with 'email already registered', login, wrong-password 401 with 'Incorrect email or password', /auth/me, PUT /api/users/me persistence, demo@demo.com login). Web UI: signup lands in onboarding; login with demo@demo.com/Demo1234! lands on /connect; wrong password shows exactly 'Wrong email or password. Please try again.' with NO 'Try again' retry link; duplicate email shows 'This email is already registered. Try logging in instead.' with no retry link; connect/moments/voice/chats/notifications/profile all render authenticated with no offline banner; /dev-diagnostics renders (testID dev-diagnostics-screen) with all required rows (Base URL, Host, Source, Scheme, Platform, Device internet, Health /api/health = OK (200), Latency, Session token = present), 'Run again' (diag-rerun) re-probes successfully, and NO JWT/token value is leaked. Onboarding progressed through the first 3+ in-page steps without any error or offline banner (test script could not auto-complete every picker step but no regression observed). No hardcoded backend URL detected in api.ts; getApiUrl uses window.location.origin on web as designed.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration55_auth_regression.py",
+    "/app/test_reports/pytest/iteration55.xml",
+    "/app/test_reports/artifacts/iteration_55/"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "api.ts:29-48 correctly excludes localhost/10.0.2.2/0.0.0.0 on native and falls back to an empty string; no hardcoded preview URL remains — matches the RCA.",
+    "dev-diagnostics.tsx:38-43 exposes only the *source* of the base URL ('EXPO_PUBLIC_BACKEND_URL', 'expoConfig.extra.backendUrl', 'window.location.origin', or 'none'); getAuthToken() is rendered only as 'present'/'none' — verified no token value leaks.",
+    "NetworkContext probe correctly hits /api/health (line 61) instead of /api/auth/me; failureRun threshold of 3 avoids false-positive offline banner.",
+    "auth.tsx humanizeError regexes match backend detail strings exactly (verified in backend test): /incorrect email or password/i and /email already registered/i. Retryable is only set when e is ApiError && e.kind !== 'http', so wrong-password (HTTP 401) never shows the 'Try again' link — verified in UI."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration55_auth_regression.py"
+  ],
+  "success_rate": {"backend": "100% (9/9)", "frontend": "100% of testable review items"},
+  "seed_data_creation": "Two new registered accounts for regression: qa_iter55_<hex>@linguatest.com (backend test module) and qa_iter55_ob_<hex>@linguatest.com / qa_iter55_ui_<hex>@linguatest.com (UI test) — all with password Test1234!.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Backend base URL: https://gmail-notify-service.preview.emergentagent.com. Regression suite lives at backend/tests/test_iteration55_auth_regression.py — reuse it for any future auth changes. UI test verifies /dev-diagnostics (dev-only route bounces to '/' when __DEV__ is false; web preview is __DEV__=true so it renders). No hardcoded URL fallbacks in api.ts — do not reintroduce them.",
+  "rca_of_issue": "N/A — this iteration was regression verification of a previously-shipped fix. No new bug found."
+}
