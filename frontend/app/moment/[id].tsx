@@ -1275,7 +1275,7 @@ export default function MomentDetail() {
                 hitSlop={8}
                 style={styles.micBtn}
               >
-                <Ionicons name="mic-outline" size={24} color={colors.onSurface} />
+                <Ionicons name="mic" size={22} color={colors.brand} />
               </Pressable>
             )}
             {draft.trim().length > 0 && (
@@ -1413,9 +1413,12 @@ const makeStyles = (colors: ThemeColors) =>
     minWidth: 190,
     marginTop: 2,
   },
+  // Same soft circular chip as the chat composer / title-bar call icon.
   micBtn: {
-    width: 40,
-    height: 40,
+    width: 44,
+    height: 44,
+    borderRadius: radius.pill,
+    backgroundColor: colors.brandTertiary,
     alignItems: "center",
     justifyContent: "center",
   },

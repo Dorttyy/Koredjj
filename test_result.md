@@ -103,6 +103,24 @@
 #====================================================================================================
 
 
+## CURRENT (2026-09-27b) — Voice/record icon gets the same soft circular chip as the header call icon
+frontend:
+  - task: "Voice-record icon in composers uses the IconChip-style soft circular background"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/chat/[id].tsx; frontend/app/moment/[id].tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "User asked that the voice-record mic icon in the chat composer get the same pretty light circular background as the call icon in the chat title-bar (that one is <IconChip tint=\"brand\"> -> colors.brandTertiary circle + colors.brand glyph), and that every voice icon share that circular shape. CHANGED: (1) chat/[id].tsx styles.micBtn now 44x44 radius.pill with backgroundColor colors.brandTertiary, and the glyph switched from mic-outline/onSurfaceSecondary 24 to mic/colors.brand 22 so it matches the header chip. (2) moment/[id].tsx voice-comment mic (testID voice-comment-mic) got the identical treatment (was a bare 40x40 icon). Both keep >=44px touch targets and the theme-aware tint so dark mode uses #10293B. Verified by screenshot on /chat/<id>: record button box 44x44 with the light circle, header call chip 36x36, same tint family. Remaining voice icons that were intentionally NOT changed (pending user confirmation): moment-compose toolbar mic (sits in a row of bare toolbar icons), room/[id].tsx + pro/session mute toggles (own call-control design), learn/pronunciation big record button."
+agent_communication:
+    -agent: "main"
+    -message: "Composer voice-record icons now use the soft circular brand chip. Awaiting user confirmation before extending the same chip to the moment-compose toolbar mic and the in-call/voice-room mute buttons, and before any UI test run."
+
+
 ## CURRENT (2026-09-27) — Fork recovery: whole workspace tree was empty, connection fully broken
 user_problem_statement: "Fix all connection problems, including a screen where an animation just stands/hangs, and any problem connecting to the backend."
 backend:

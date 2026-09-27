@@ -2381,7 +2381,7 @@ export default function ChatScreen() {
                   {uploadingVoice ? (
                     <ActivityIndicator size="small" color={colors.brand} />
                   ) : (
-                    <Ionicons name="mic-outline" size={24} color={colors.onSurfaceSecondary} />
+                    <Ionicons name="mic" size={22} color={colors.brand} />
                   )}
                 </Pressable>
               )}
@@ -3758,9 +3758,14 @@ const makeStyles = (colors: ThemeColors) =>
       alignItems: "center",
       gap: spacing.sm,
     },
+    // Voice-record button in the composer. Mirrors the soft circular chip
+    // used by the call icon in the chat title-bar (IconChip tint="brand"):
+    // light brand-tinted circle + brand-coloured glyph, sized like sendBtn.
     micBtn: {
       width: 44,
       height: 44,
+      borderRadius: radius.pill,
+      backgroundColor: colors.brandTertiary,
       alignItems: "center",
       justifyContent: "center",
     },
