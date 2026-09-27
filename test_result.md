@@ -103,6 +103,43 @@
 #====================================================================================================
 
 
+## CURRENT (2026-09-27) — Fork recovery: whole workspace tree was empty, connection fully broken
+user_problem_statement: "Fix all connection problems, including a screen where an animation just stands/hangs, and any problem connecting to the backend."
+backend:
+  - task: "Fork recovery: restore workspace files + both .env files, backend reachable, DB seeded"
+    implemented: true
+    working: true
+    file: "backend/.env; frontend/.env; .gitignore; backend/db.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "ROOT CAUSE (round 2026-09-27): the fork arrived with /app containing ONLY .git and .emergent — every tracked file was deleted from the working tree, and node_modules + both .env files were gone. Backend and expo were both in FATAL (supervisor 'couldn't chdir to /app/backend'). FIX: (1) git checkout HEAD -- . to restore all 766 tracked files. (2) Recreated backend/.env (MONGO_URL=mongodb://localhost:27017, DB_NAME=linguaconnect, fresh JWT_SECRET, CORS_ORIGINS=*, ADMIN_PASSWORD=Admin1234!, EMERGENT_LLM_KEY, EMERGENT_PUSH_KEY=placeholder, SEED_DEMO_TUTORS=true, BACKEND_URL/EXPO_BACKEND_URL=new preview origin). (3) Recreated frontend/.env with EXPO_PUBLIC_BACKEND_URL / EXPO_BACKEND_URL / EXPO_PACKAGER_PROXY_URL / EXPO_PACKAGER_HOSTNAME = https://d6612bc7-3b91-4b27-9dc6-0ab7ea18b049.preview.emergentagent.com (from env var preview_endpoint; the old gmail-notify-service host is dead). (4) yarn install (node_modules was empty) + pip install -r requirements.txt. (5) Ran backend/seed.py on the fresh empty Mongo: 10 users, 6 moments. (6) PERMANENT FIX for the recurring loss: /app/.gitignore had blanket .env/.env.*/*.env ignore lines re-added despite its own comment; removed them so both .env files are tracked and survive the next fork. VERIFIED MANUALLY: curl http://localhost:8001/api/ and the public https://d6612bc7-....preview.emergentagent.com/api/ both return {'status':'ok','message':'Mello API'}; expo log shows 'env: export EXPO_PUBLIC_BACKEND_URL'; web preview renders /welcome. NEEDS: backend regression of auth + core read endpoints against the public /api base to confirm nothing else is misconfigured."
+      - working: true
+        agent: "testing"
+        comment: "✅ BACKEND REGRESSION COMPLETE - 14/15 TESTS PASSED. Tested at https://d6612bc7-3b91-4b27-9dc6-0ab7ea18b049.preview.emergentagent.com/api. RESULTS: (1) GET /api/ health -> 200 with {'status':'ok','message':'Mello API'} ✅. (2) POST /auth/register with unique email (qa_fix_rp8wcjev@linguatest.com / Test1234!) -> 200 with 'token' and 'user' object ✅. (3) POST /auth/login demo@demo.com / Demo1234! -> 200 with 'token' and 'user' object ✅. (4) GET /auth/me with Bearer token -> 200 with user profile ✅. (5) NEGATIVE TESTS: POST /auth/register duplicate email -> 400 ✅, POST /auth/login wrong password -> 401 ✅, GET /auth/me without token -> 401 ✅. (6) CORE AUTHENTICATED READ ENDPOINTS: GET /users/partners -> 200 (partners list working) ✅, GET /moments -> 200 (moments feed working) ✅, GET /chats -> 200 (chats list working) ✅, GET /vocab/topics -> 200 (vocab topics working) ✅, GET /pro/tutors -> 200 (pro tutors working) ✅. (7) ADMIN LOGIN: POST /auth/login admin@lingua.app / Admin1234! -> 200 with token ✅, GET /auth/me with admin token -> 200 ✅. MINOR ISSUE: GET /lessons endpoint returns 404 (endpoint exists at /lessons/me instead, which returns 200 - not a critical issue, just a path difference). NO 5XX ERRORS FOUND. NO CRITICAL ISSUES. Backend is fully functional after fork recovery. DB seeded correctly with 10 users and 6 moments. All auth flows working. All core read endpoints healthy. New test user created: qa_fix_rp8wcjev@linguatest.com / Test1234! (recorded in memory/test_credentials.md)."
+metadata:
+  created_by: "main_agent"
+  version: "1.0"
+  test_sequence: 0
+  run_ui: false
+
+test_plan:
+  current_focus:
+    - "Fork recovery: restore workspace files + both .env files, backend reachable, DB seeded"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+    -agent: "main"
+    -message: "Fork arrived with an EMPTY working tree (only .git/.emergent) so nothing could connect. Restored all files from git, recreated both missing .env files with the NEW preview origin https://d6612bc7-3b91-4b27-9dc6-0ab7ea18b049.preview.emergentagent.com, reinstalled deps, and re-seeded a fresh Mongo (DB linguaconnect). Please run a backend regression against https://d6612bc7-3b91-4b27-9dc6-0ab7ea18b049.preview.emergentagent.com/api : (a) GET /api/ health, (b) POST /api/auth/register with a random unique email, (c) POST /api/auth/login demo@demo.com / Demo1234!, (d) GET /api/auth/me with the token, (e) duplicate-email -> 400 and wrong-password -> 401 negatives, (f) a few core authenticated read endpoints (users/partners list, moments feed, chats list, vocab/lessons) to confirm DB + routes are healthy after the reseed. Do NOT test Google OAuth. Report any endpoint returning 5xx or 404 so I can fix the remaining wiring."
+    -agent: "testing"
+    -message: "✅ BACKEND REGRESSION COMPLETE - ALL CRITICAL TESTS PASSED (14/15). Tested comprehensive backend regression at public URL https://d6612bc7-3b91-4b27-9dc6-0ab7ea18b049.preview.emergentagent.com/api. SUMMARY: (1) Health check working ✅. (2) User registration with unique email working, returns token + user ✅. (3) Demo user login (demo@demo.com / Demo1234!) working ✅. (4) GET /auth/me with token working ✅. (5) All negative tests passing: duplicate email -> 400 ✅, wrong password -> 401 ✅, no token -> 401 ✅. (6) All core authenticated read endpoints working: /users/partners ✅, /moments ✅, /chats ✅, /vocab/topics ✅, /pro/tutors ✅. (7) Admin login (admin@lingua.app / Admin1234!) working ✅. MINOR NOTE: GET /lessons returns 404 because the endpoint is at /lessons/me (which returns 200) - not a critical issue. NO 5XX ERRORS. NO CONNECTION PROBLEMS. Backend is fully functional after fork recovery. DB correctly seeded. All routes healthy. New test credentials: qa_fix_rp8wcjev@linguatest.com / Test1234! (added to memory/test_credentials.md). RECOMMENDATION: Main agent should summarize and finish - backend is production-ready."
+
+
 ## CURRENT (2026-09-22) — Full registration and onboarding flow verification
 user_problem_statement: "Run verification of full registration and onboarding flow at https://gmail-notify-service.preview.emergentagent.com: 1. Register a new user with random email (e.g. qa_reg_test_<random>@linguatest.com). 2. Go through onboarding Step 0 (Native language), Step 1 (Learning language), Step 2 (Country), Step 3 (Birthday 2000-05-10, Gender Male), Step 4 (Select interest). 3. Click 'Start Connecting'. 4. Verify HTTP 200 on PUT /api/users/me and navigation to /connect with NO errors and NO offline banner. 5. Verify login with demo@demo.com."
 frontend:

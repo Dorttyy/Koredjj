@@ -23,3 +23,8 @@ Backend restored 2026-09-21 on fresh fork (local Mongo, DB `linguaconnect`).
   the same user_id (flag `is_google: true`); brand new Google users get a random unusable
   password_hash and 1000 starter coins.
 - Any Google account is allowed (no domain allowlist).
+
+## Fork Recovery Test (2026-09-27)
+| Purpose | Email | Password | Notes |
+|---|---|---|---|
+| QA Fork Recovery Test | qa_fix_rp8wcjev@linguatest.com | Test1234! | created during backend regression testing after fork recovery on 2026-09-27 |
