@@ -34,6 +34,10 @@ export const OfflineBanner: React.FC = () => {
     icon = "warning-outline";
     title = "No server address in this build";
     subtitle = "Re-publish the app, then install the new build";
+  } else if (status === "server-not-running") {
+    icon = "server-outline";
+    title = "Server isn't running";
+    subtitle = `${hostOf(baseUrl)} has no live app right now — tap for details`;
   } else if (status === "server-down") {
     icon = "cloud-offline-outline";
     title = "Can't reach the server";

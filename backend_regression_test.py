@@ -14,7 +14,7 @@ import websocket
 import threading
 
 # Backend URL
-BASE_URL = "https://gmail-notify-service.preview.emergentagent.com/api"
+BASE_URL = "https://apk-build-debug-1.preview.emergentagent.com/api"
 
 # Test credentials
 MEI_EMAIL = "mei@demo.com"

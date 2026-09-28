@@ -8,7 +8,7 @@
  * touching a single screen.
  *
  * - WHERE we connect  -> src/net/server-address.ts
- * - HOW we connect    -> src/net/transport.ts (queue, retries, failover)
+ * - HOW we connect    -> src/net/transport.ts (deadlines, retries, failover)
  * - WHY it failed     -> src/utils/net-diagnostics.ts (classification + copy)
  */
 
@@ -25,6 +25,7 @@ import {
   bindNetworkTelemetry,
   getAuthToken,
   lastTransportFailure,
+  probeAddress,
   probeServer,
   send,
   setAuthToken,
@@ -44,6 +45,7 @@ export {
   hydrateServerAddress,
   lastTransportFailure,
   normalizeAddress,
+  probeAddress,
   probeServer,
   setAuthToken,
   setManualAddress,

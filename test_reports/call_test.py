@@ -9,7 +9,7 @@ import uuid
 import requests
 from playwright.async_api import async_playwright, Dialog
 
-BASE = "https://gmail-notify-service.preview.emergentagent.com"
+BASE = "https://apk-build-debug-1.preview.emergentagent.com"
 API = BASE + "/api"
 
 DEMO = ("demo@demo.com", "Demo1234!")

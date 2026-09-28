@@ -71,6 +71,37 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     let active = true;
     const version = sessionVersion.current;
     const isCurrent = () => active && version === sessionVersion.current;
+    let storedToken: string | null = null;
+    const resumeInBackground = async (token: string) => {
+      // ~3 minutes of gentle retries; stops as soon as the user signs in or
+      // out manually (session version changes) or the provider unmounts.
+      for (let i = 0; i < 36; i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+        if (!isCurrent()) return;
+        try {
+          setAuthToken(token);
+          const me = await api.get<User>("/auth/me", { attempts: 1, timeoutMs: 8000 });
+          if (!isCurrent()) return;
+          if (me.is_guest) {
+            setAuthToken(null);
+            return;
+          }
+          setUser(me);
+          registerForPush();
+          return;
+        } catch (error) {
+          if (!isCurrent()) return;
+          setAuthToken(null);
+          const status = (error as { status?: number } | null)?.status;
+          if (status === 401 || status === 403) {
+            await persist(async () => {
+              if (isCurrent()) await storage.secureRemove(TOKEN_KEY);
+            });
+            return;
+          }
+        }
+      }
+    };
     const restore = async () => {
       try {
         await storage.removeItem(LEGACY_GUEST_KEY);
@@ -91,12 +122,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (!isCurrent()) return;
         if (token) {
           setAuthToken(token);
-          // Fail fast on a cold start: retrying here would keep the splash
-          // screen up for a minute when the server is unreachable. One 12s
-          // attempt is enough — the stored token is preserved unless the
-          // server actually rejects it (401/403), so the user simply lands on
-          // the login screen and the offline banner explains why.
-          const me = await api.get<User>("/auth/me", { attempts: 1, timeoutMs: 12000 });
+          // Two quick attempts (8s + 8s max) so a dropped packet on a cold
+          // start doesn't sign the user out, without holding the splash for
+          // a minute. If the server is still unreachable the stored token is
+          // KEPT and `resumeInBackground` keeps trying (see catch below).
+          storedToken = token;
+          const me = await api.get<User>("/auth/me", { attempts: 2, timeoutMs: 8000 });
           if (!isCurrent()) return;
           if (me.is_guest) {
             setAuthToken(null);
@@ -117,6 +148,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           await persist(async () => {
             if (isCurrent()) await storage.secureRemove(TOKEN_KEY);
           });
+        } else if (storedToken) {
+          // Server unreachable at launch (offline, server waking up, flaky
+          // mobile data): keep retrying quietly so the user is signed straight
+          // back in the moment the connection returns — instead of being left
+          // on the login screen with a perfectly valid session.
+          void resumeInBackground(storedToken);
         }
       } finally {
         // The Google callback path bumps the session version on success, so

@@ -24,7 +24,7 @@
       }
     },
     "android": {
-      "usesCleartextTraffic": true,
+      "usesCleartextTraffic": false,
       "icon": "./assets/images/android-icon.png",
       "softwareKeyboardLayoutMode": "resize",
       "googleServicesFile": "./google-services.json",

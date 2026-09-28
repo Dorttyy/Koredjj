@@ -38,6 +38,9 @@ export type NetworkStatus =
   | "online"
   | "device-offline"
   | "server-down"
+  /** Something answers at the address, but it is not this app's API
+   *  (removed/failed deployment, gateway error page, captive portal). */
+  | "server-not-running"
   | "no-server-url";
 
 interface NetworkState {
@@ -104,13 +107,17 @@ export const NetworkProvider: React.FC<{ children: React.ReactNode }> = ({
       setStatus("device-offline");
       return;
     }
+    if (hint === "not-running") {
+      setStatus("server-not-running");
+      return;
+    }
     const online = await deviceHasInternet();
     setStatus(online === false ? "device-offline" : "server-down");
   }, []);
 
   /** Probe every candidate address; the first that answers wins. */
   const probe = useCallback(async (): Promise<boolean> => {
-    const result = await probeServer(12000);
+    const result = await probeServer(10000);
     setBaseUrl(getApiUrl());
     if (result.ok) {
       goOnline();
@@ -121,7 +128,11 @@ export const NetworkProvider: React.FC<{ children: React.ReactNode }> = ({
       return false;
     }
     failureRun.current += 1;
-    if (failureRun.current >= FAILURE_THRESHOLD || !ready) await classifyOutage();
+    // A probe is a deliberate, dedicated check — at boot (not yet `ready`) or
+    // for a deterministic "not our API" answer, report it straight away.
+    if (failureRun.current >= FAILURE_THRESHOLD || !ready || result.kind === "not-running") {
+      await classifyOutage(result.kind);
+    }
     return false;
   }, [classifyOutage, goOnline, ready]);
 
@@ -134,7 +145,9 @@ export const NetworkProvider: React.FC<{ children: React.ReactNode }> = ({
         return;
       }
       failureRun.current += 1;
-      if (failureRun.current >= FAILURE_THRESHOLD) void classifyOutage(kind);
+      // "Not our API" is deterministic, not flaky — no need to wait for a
+      // second exhausted request.
+      if (failureRun.current >= FAILURE_THRESHOLD || kind === "not-running") void classifyOutage(kind);
     },
     [classifyOutage],
   );

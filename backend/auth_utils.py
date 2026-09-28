@@ -1,4 +1,6 @@
+import logging
 import os
+import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
@@ -8,9 +10,48 @@ from fastapi.security import OAuth2PasswordBearer
 from jwt import PyJWTError
 from passlib.context import CryptContext
 
-from db import users_col
+from db import DB_NAME, MONGO_URL, users_col
 
-JWT_SECRET = os.environ["JWT_SECRET"]
+logger = logging.getLogger(__name__)
+
+
+def _resolve_jwt_secret() -> str:
+    """JWT signing secret that survives a lost/partial .env.
+
+    1. JWT_SECRET env var (normal case).
+    2. Otherwise a random secret generated ONCE and persisted in MongoDB
+       (`app_config` doc `_id="jwt_secret"`), so every restart/replica signs
+       with the same key and users stay logged in. `$setOnInsert` makes
+       concurrent first boots converge on a single value.
+    3. Last resort (database unreachable at import): an in-memory random
+       secret — the API still boots; sessions just reset on the next restart.
+    """
+    env_secret = (os.environ.get("JWT_SECRET") or "").strip()
+    if env_secret:
+        return env_secret
+    try:
+        from pymongo import MongoClient, ReturnDocument
+
+        sync_client = MongoClient(MONGO_URL, serverSelectionTimeoutMS=8000)
+        try:
+            doc = sync_client[DB_NAME]["app_config"].find_one_and_update(
+                {"_id": "jwt_secret"},
+                {"$setOnInsert": {"value": secrets.token_hex(32)}},
+                upsert=True,
+                return_document=ReturnDocument.AFTER,
+            )
+        finally:
+            sync_client.close()
+        value = (doc or {}).get("value")
+        if value:
+            logger.warning("JWT_SECRET not set — using the secret persisted in MongoDB")
+            return value
+    except Exception as exc:  # pragma: no cover - only when Mongo is down at boot
+        logger.error("JWT_SECRET not set and MongoDB unreachable (%s); using a temporary secret", exc)
+    return secrets.token_hex(32)
+
+
+JWT_SECRET = _resolve_jwt_secret()
 JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_DAYS = 7
 # Admin sessions are deliberately short-lived (rotation) — the dashboard asks

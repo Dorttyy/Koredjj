@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
-from huggingface_hub import HfApi, snapshot_download
+from optional_deps import require_optional
 
 load_dotenv()
 BASE = Path(os.getenv("CAPTION_MODEL_ROOT", Path(__file__).parent / "caption_models"))
@@ -21,6 +21,8 @@ MODELS = [
 
 
 def provision():
+    (huggingface_hub,) = require_optional("huggingface_hub")
+    HfApi, snapshot_download = huggingface_hub.HfApi, huggingface_hub.snapshot_download
     manifest = {}
     for name, repo, revision in MODELS:
         sha = revision or HfApi().model_info(repo).sha

@@ -22,7 +22,13 @@ export type NetFailureKind =
   /** Host answered too slowly / not at all inside our deadline. */
   | "timeout"
   /** Device is online but the host could not be reached (DNS, refused, TLS). */
-  | "unreachable";
+  | "unreachable"
+  /**
+   * Something answered, but it is NOT this app's API: a dead/removed
+   * deployment ("Application not found"), a gateway error page (502/503/504)
+   * or a captive Wi-Fi portal.
+   */
+  | "not-running";
 
 export class ApiError extends Error {
   kind: NetFailureKind | "http";
@@ -91,7 +97,12 @@ export const deviceHasInternet = async (): Promise<boolean | null> => {
 };
 
 /** User-facing copy per failure kind — honest about server vs. connection. */
-export const messageFor = (kind: NetFailureKind, baseUrl?: string): string => {
+export const messageFor = (
+  kind: NetFailureKind,
+  baseUrl?: string,
+  status?: number,
+  detail?: string,
+): string => {
   switch (kind) {
     case "no-backend-url":
       return "This app build has no server address configured. Please re-publish the app and install the new build.";
@@ -99,6 +110,15 @@ export const messageFor = (kind: NetFailureKind, baseUrl?: string): string => {
       return "You're offline. Turn on Wi-Fi or mobile data and try again.";
     case "timeout":
       return "The server is taking too long to respond. Please try again.";
+    case "not-running": {
+      const why = [status ? `HTTP ${status}` : "", detail && detail !== `HTTP ${status}` ? detail : ""]
+        .filter(Boolean)
+        .join(" · ");
+      if (status && [502, 503, 504].includes(status)) {
+        return `The server (${hostOf(baseUrl)}) is temporarily unavailable${why ? ` (${why})` : ""}. Please try again in a minute.`;
+      }
+      return `The app server isn't running at ${hostOf(baseUrl)}${why ? ` (${why})` : ""}. The app needs to be re-deployed.`;
+    }
     case "unreachable":
     default:
       // A standalone build baked with a workspace-only host is a publish
@@ -106,12 +126,19 @@ export const messageFor = (kind: NetFailureKind, baseUrl?: string): string => {
       if (Platform.OS !== "web" && isEphemeralHost(baseUrl)) {
         return `This build was made with a temporary preview server address (${hostOf(baseUrl)}), which a phone can never reach. Deploy the app first, then install a fresh build.`;
       }
-      return `Can't reach the server (${hostOf(baseUrl)}). It may be down or not deployed yet — please try again shortly.`;
+      return `Can't reach the server (${hostOf(baseUrl)}). Please check your internet connection and try again.`;
   }
 };
 
-export const makeNetError = (kind: NetFailureKind, baseUrl?: string): ApiError =>
-  new ApiError(messageFor(kind, baseUrl), kind, { baseUrl });
+export const makeNetError = (
+  kind: NetFailureKind,
+  baseUrl?: string,
+  status?: number,
+  detail?: string,
+): ApiError =>
+  // `status` stays in the message only: it belongs to the edge/gateway, not to
+  // our API, so screens that branch on `error.status` (401/404…) must not see it.
+  new ApiError(messageFor(kind, baseUrl, status, detail), kind, { baseUrl });
 
 export interface HealthResult {
   ok: boolean;

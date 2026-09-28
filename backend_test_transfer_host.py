@@ -9,7 +9,7 @@ import sys
 import time
 
 # Backend URL from frontend/.env
-BASE_URL = "https://gmail-notify-service.preview.emergentagent.com/api"
+BASE_URL = "https://apk-build-debug-1.preview.emergentagent.com/api"
 
 # Test credentials from /app/memory/test_credentials.md
 MEI_EMAIL = "mei@demo.com"

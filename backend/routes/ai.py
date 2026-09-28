@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from auth_utils import CurrentUser
 import caption_engine
+from optional_deps import require_optional
 from config_utils import get_app_config
 from db import audio_col, media_col, users_col
 from models import CorrectRequest, TranscribeRequest, TranslateRequest, _vip_active
@@ -320,7 +321,8 @@ def _get_whisper():
     global _whisper_model
     if _whisper_model is None:
         try:
-            from faster_whisper import WhisperModel
+            (faster_whisper,) = require_optional("faster_whisper")
+            WhisperModel = faster_whisper.WhisperModel
 
             local_dir = caption_engine.ROOT / "speech"
             source = str(local_dir) if (local_dir / "model.bin").is_file() else "tiny"

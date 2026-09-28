@@ -5,6 +5,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import HTTPException
+from optional_deps import OptionalDependencyMissing, require_optional
 
 load_dotenv()
 ROOT = Path(os.getenv("CAPTION_MODEL_ROOT", Path(__file__).parent / "caption_models"))
@@ -23,13 +24,13 @@ def ready():
 
 def process(pcm: bytes, targets: list[str]):
     global _speech, _translator, _tokenizer
-    import ctranslate2
-    import numpy as np
-    import sentencepiece
     try:
-        from faster_whisper import WhisperModel
-    except ImportError:
+        ctranslate2, np, sentencepiece, faster_whisper = require_optional(
+            "ctranslate2", "numpy", "sentencepiece", "faster_whisper"
+        )
+    except OptionalDependencyMissing:
         return None
+    WhisperModel = faster_whisper.WhisperModel
 
     if _speech is None:
         _speech = WhisperModel(str(ROOT / "speech"), device="cpu", compute_type="int8", cpu_threads=2)

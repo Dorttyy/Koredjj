@@ -66,9 +66,15 @@ export const normalizeAddress = (raw?: string | null): string => {
  */
 const ADDRESS_SHAPE = /^https?:\/\/[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*(?::\d{2,5})?(?:\/[a-z0-9._~%/-]*)?$/i;
 
+/** Installed (release) builds only ever talk HTTPS — cleartext is disabled in
+ *  app.json, so an `http://` address could never work there anyway. */
+const requiresHttps = (): boolean =>
+  Platform.OS !== "web" && !(typeof __DEV__ !== "undefined" && __DEV__);
+
 export const isUsableAddress = (url: string): boolean => {
   if (!url) return false;
   if (Platform.OS !== "web" && UNREACHABLE_ON_DEVICE.test(url)) return false;
+  if (requiresHttps() && !/^https:\/\//i.test(url)) return false;
   return ADDRESS_SHAPE.test(url);
 };
 
@@ -84,6 +90,21 @@ const configAddress = (): string => {
     if (isUsableAddress(url)) return url;
   }
   return "";
+};
+
+/**
+ * Optional backup addresses shipped in app.json (`expo.extra.fallbackBackendUrls`).
+ * The permanent deployed URL is listed there so that even if the publish
+ * pipeline ever fails to inject EXPO_PUBLIC_BACKEND_URL (or injects a host
+ * that later disappears), an installed build still finds its server.
+ */
+const fallbackAddresses = (): string[] => {
+  const raw = (Constants.expoConfig?.extra as { fallbackBackendUrls?: unknown } | undefined)
+    ?.fallbackBackendUrls;
+  const list = Array.isArray(raw) ? raw : typeof raw === "string" ? raw.split(",") : [];
+  return list
+    .map((u) => normalizeAddress(typeof u === "string" ? u : ""))
+    .filter((u) => isUsableAddress(u));
 };
 
 // Synchronous mirrors of the persisted values. Storage is async but callers
@@ -109,6 +130,7 @@ export const addressCandidates = (): AddressCandidate[] => {
   // address has gone away.
   push(process.env.EXPO_PUBLIC_BACKEND_URL ?? "", "build-env");
   push(configAddress(), "app-config");
+  for (const url of fallbackAddresses()) push(url, "app-config");
   push(lastGoodAddress, "last-good");
   if (Platform.OS === "web" && typeof window !== "undefined" && window.location?.origin) {
     push(window.location.origin, "web-origin");
@@ -157,7 +179,9 @@ export const setManualAddress = async (raw: string | null): Promise<string> => {
     return "";
   }
   if (!isUsableAddress(normalized)) {
-    throw new Error("That server address doesn't look valid. Example: https://my-app.emergent.host");
+    throw new Error(
+      "That server address doesn't look valid. Use a secure https:// address, e.g. https://my-app.emergent.host",
+    );
   }
   manualAddress = normalized;
   activeAddress = normalized;

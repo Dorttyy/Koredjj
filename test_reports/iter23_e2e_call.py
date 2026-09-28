@@ -4,7 +4,7 @@ import asyncio
 import sys
 from playwright.async_api import async_playwright
 
-BASE = "https://gmail-notify-service.preview.emergentagent.com"
+BASE = "https://apk-build-debug-1.preview.emergentagent.com"
 FAKE_ARGS = [
     "--use-fake-device-for-media-stream",
     "--use-fake-ui-for-media-stream",

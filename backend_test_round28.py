@@ -11,7 +11,7 @@ import time
 from typing import Optional
 
 # Backend URL from frontend/.env
-BASE_URL = "https://gmail-notify-service.preview.emergentagent.com/api"
+BASE_URL = "https://apk-build-debug-1.preview.emergentagent.com/api"
 
 # Test credentials
 MEI_EMAIL = "mei@demo.com"

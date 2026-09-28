@@ -10,8 +10,42 @@ load_dotenv(ROOT_DIR / ".env")
 
 logger = logging.getLogger(__name__)
 
-client = AsyncIOMotorClient(os.environ["MONGO_URL"])
-db = client[os.environ["DB_NAME"]]
+# Deploy-safe configuration: a missing .env (it is lost on every fork, and a
+# production deploy may inject only some variables) must NEVER crash the API at
+# import time — a crashed API is exactly what an installed APK reports as
+# "Can't reach the server". Managed deployments inject MONGO_URL / DB_NAME, so
+# these defaults only ever apply to a bare local container.
+_LOCAL_MONGO = not (os.environ.get("MONGO_URL") or "").strip()
+MONGO_URL = (os.environ.get("MONGO_URL") or "mongodb://localhost:27017").strip()
+if _LOCAL_MONGO:
+    logger.warning("MONGO_URL not set — falling back to local MongoDB")
+
+client = AsyncIOMotorClient(MONGO_URL, serverSelectionTimeoutMS=15000)
+
+
+def _database_name() -> str:
+    """DB name from configuration only: DB_NAME, else the database embedded in
+    MONGO_URL (``mongodb+srv://…/<db>``). Never a name invented in code."""
+    name = (os.environ.get("DB_NAME") or "").strip()
+    if name:
+        return name
+    try:
+        return client.get_default_database().name
+    except Exception as exc:  # ConfigurationError: URI carries no database
+        if _LOCAL_MONGO:
+            # Bare local container with no configuration at all (e.g. a fresh
+            # fork before .env is restored): use the local dev database so the
+            # API still boots. Managed deployments always inject MONGO_URL AND
+            # DB_NAME, so this branch can never pick a database for them.
+            logger.warning("DB_NAME not set — using the local development database")
+            return "linguaconnect"
+        raise RuntimeError(
+            "DB_NAME is not configured and MONGO_URL names no database — set DB_NAME"
+        ) from exc
+
+
+DB_NAME = _database_name()
+db = client[DB_NAME]
 
 users_col = db["users"]
 conversations_col = db["conversations"]

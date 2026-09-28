@@ -46,6 +46,7 @@ import {
   getAuthToken,
   getManualAddress,
   lastTransportFailure,
+  probeAddress,
   setManualAddress,
 } from "@/src/utils/api";
 import { useNetwork } from "@/src/context/NetworkContext";
@@ -85,6 +86,19 @@ const verdictFor = (
     };
   }
   if (!server) return { title: "Checking…", detail: "Running the connection tests." };
+  if (!server.ok && server.errorName?.startsWith("HTTP ")) {
+    // Something answered, but it is not this app's API.
+    const gateway = /HTTP 50[234]/.test(server.errorName);
+    return gateway
+      ? {
+          title: "Server is temporarily unavailable",
+          detail: `${hostOf(baseUrl)} answered with ${server.errorName} (${server.errorMessage ?? ""}). The server is restarting or overloaded — wait a minute and run the check again.`,
+        }
+      : {
+          title: "The app server isn't running at this address",
+          detail: `${hostOf(baseUrl)} answered "${server.errorMessage ?? server.errorName}" — that is not the Mello API, so this deployment was removed, stopped or failed. Re-deploy the app from Emergent (Publish → Deploy). If the new deployment has a different address, enter it below or build a new APK.`,
+        };
+  }
   if (server.ok) {
     return {
       title: "Server reachable",
@@ -152,7 +166,27 @@ export default function ConnectionCheck() {
     setCopied(false);
     const [snapshot, ours, ...rest] = await Promise.all([
       networkSnapshot(),
-      probeUrl("Our server", baseUrl ? `${baseUrl}/api/health` : "", 15000),
+      baseUrl
+        ? probeAddress(baseUrl, 15000).then(
+            (h): ProbeResult => ({
+              label: "Our server",
+              url: `${baseUrl}/api/health`,
+              ok: h.ok,
+              status: h.status,
+              latencyMs: h.latencyMs,
+              timedOut: h.timedOut,
+              errorName: h.errorName,
+              errorMessage: h.errorMessage,
+            }),
+          )
+        : Promise.resolve<ProbeResult>({
+            label: "Our server",
+            url: "",
+            ok: false,
+            latencyMs: 0,
+            errorName: "no-backend-url",
+            errorMessage: "This build has no server address",
+          }),
       ...controlProbes.map((p) => probeUrl(p.label, p.url, 12000)),
     ]);
     setNet(snapshot);

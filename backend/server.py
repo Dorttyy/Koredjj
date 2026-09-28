@@ -53,32 +53,66 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    await ensure_indexes()
-    await seed_admin()
-    await backfill_usernames()
+async def _startup_step(name: str, factory, timeout: float = 120.0) -> None:
+    """Run one startup job; a failure is logged, never fatal.
+
+    A single slow/failed seed (e.g. a remote Atlas hiccup) must not keep the
+    API from serving — a production container whose startup crashes or hangs
+    is what an installed APK reports as "Can't reach the server".
+    """
+    try:
+        await asyncio.wait_for(factory(), timeout=timeout)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.exception("Startup step '%s' failed — the API keeps serving", name)
+
+
+async def _bootstrap() -> None:
+    """Idempotent seeding/indexing, run in the background AFTER the server is
+    already accepting requests so health checks answer instantly."""
+    await _startup_step("indexes", ensure_indexes)
+    await _startup_step("admin", seed_admin)
+    await _startup_step("usernames", backfill_usernames)
     # Fresh previews can opt out of synthetic profiles without disabling Pro.
     if os.environ.get("SEED_DEMO_TUTORS", "true").lower() == "true":
-        await seed_pro_tutors()
-    await seed_vocab_content()
-    await room_time.initialize()
-    await translation_service.initialize()
-    # Free offline models are ~600 MB and are not in the repo, so a fresh
-    # container self-heals in the background. Translation keeps working through
-    # the free online provider while this runs.
+        await _startup_step("pro-tutors", seed_pro_tutors)
+    await _startup_step("vocab", seed_vocab_content, timeout=300.0)
+    await _startup_step("room-time", room_time.initialize)
+    await _startup_step("translation", translation_service.initialize)
+    logger.info("Background bootstrap complete")
+
+
+async def _guarded_forever(name: str, factory) -> None:
+    """Keep a long-running watchdog alive; restart it after an unexpected crash."""
+    while True:
+        try:
+            await factory()
+            return
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Background task '%s' crashed — restarting in 10s", name)
+            await asyncio.sleep(10)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    bootstrap_task = asyncio.create_task(_bootstrap())
+    # Free offline models are ~600 MB and are not in the repo; opt-in only
+    # (AUTO_PROVISION_MODELS=true). Translation works via the free provider.
     model_task = asyncio.create_task(model_provisioning.ensure_background())
-    quota_task = asyncio.create_task(room_time.watchdog())
+    quota_task = asyncio.create_task(_guarded_forever("room-time-watchdog", room_time.watchdog))
     try:
         yield
     finally:
-        quota_task.cancel()
-        model_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await quota_task
-        with suppress(asyncio.CancelledError):
-            await model_task
-        await translation_service.shutdown()
+        for task in (quota_task, model_task, bootstrap_task):
+            task.cancel()
+        for task in (quota_task, model_task, bootstrap_task):
+            with suppress(asyncio.CancelledError, Exception):
+                await task
+        with suppress(Exception):
+            await translation_service.shutdown()
         client.close()
 
 
@@ -104,17 +138,22 @@ async def seed_admin():
     from db import users_col
 
     email = "admin@lingua.app"
+    admin_password = (os.environ.get("ADMIN_PASSWORD") or "").strip()
     existing = await users_col.find_one({"email": email})
     if existing:
         if not existing.get("is_admin"):
             await users_col.update_one({"_id": existing["_id"]}, {"$set": {"is_admin": True}})
+        return
+    if not admin_password:
+        # Never create an admin with a guessable default password.
+        logger.warning("ADMIN_PASSWORD not set — skipping admin account seeding")
         return
     now = datetime.now(timezone.utc).isoformat()
     await users_col.insert_one(
         {
             "_id": str(uuid.uuid4()),
             "email": email,
-            "password_hash": hash_password(os.environ.get("ADMIN_PASSWORD", "Admin1234!")),
+            "password_hash": hash_password(admin_password),
             "name": "Admin",
             "is_admin": True,
             "banned": False,

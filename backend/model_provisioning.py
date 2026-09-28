@@ -11,12 +11,14 @@ free fallback simply stays in charge.
 Never blocks FastAPI startup and never raises into the request path.
 """
 import asyncio
+import importlib
 import logging
 import os
 import shutil
 from pathlib import Path
 
 import local_text_translation
+from optional_deps import require_optional
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +40,9 @@ def installed() -> bool:
 
 
 def _provision() -> None:
-    import provision_caption_models
-
+    # huggingface_hub is only needed for this opt-in download.
+    require_optional("huggingface_hub")
+    provision_caption_models = importlib.import_module("provision_caption_models")
     provision_caption_models.provision()
 
 
@@ -48,7 +51,10 @@ async def ensure_background() -> None:
     if installed():
         logger.info("Offline translation models present at %s", ROOT)
         return
-    if os.environ.get("AUTO_PROVISION_MODELS", "true").strip().lower() not in {"1", "true", "yes"}:
+    # Opt-IN only: a ~600 MB download at boot competes with the API for CPU,
+    # RAM and disk on a small production container (and the runtimes it needs,
+    # ctranslate2/faster-whisper, are not in requirements.txt anyway).
+    if os.environ.get("AUTO_PROVISION_MODELS", "false").strip().lower() not in {"1", "true", "yes"}:
         logger.info("Model auto-provisioning disabled; using the free online translator")
         return
     try:

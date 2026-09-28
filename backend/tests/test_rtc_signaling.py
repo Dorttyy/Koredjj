@@ -6,7 +6,7 @@ import json
 import httpx
 import websockets
 
-BASE = "https://gmail-notify-service.preview.emergentagent.com"
+BASE = "https://apk-build-debug-1.preview.emergentagent.com"
 API = f"{BASE}/api"
 WS = BASE.replace("https", "wss") + "/api/ws"
 

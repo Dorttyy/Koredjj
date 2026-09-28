@@ -14,7 +14,7 @@ We measure with page.evaluate and log the results.
 """
 import asyncio, json, os, statistics
 
-BASE = "https://gmail-notify-service.preview.emergentagent.com"
+BASE = "https://apk-build-debug-1.preview.emergentagent.com"
 CONV = "dc1cf7d7-2f98-43dc-8a15-07b8ff742e03"
 
 async def run(page):

@@ -155,6 +155,7 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({
   const { user } = useAuth();
   // `ready` flips true only after the backend has answered at least once.
   const { ready: serverReady } = useNetwork();
+  const userId = user?.id ?? null;
   const { colors } = useTheme();
   const wsRef = useRef<WebSocket | null>(null);
   const subscribersRef = useRef<Set<SignalHandler>>(new Set());
@@ -752,7 +753,7 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({
     // a WebSocket permanently occupies one of OkHttp's five per-host slots, so
     // opening (and endlessly retrying) it while HTTP is broken would starve
     // real requests and turn a server outage into a frozen app.
-    if (!user || !serverReady) return;
+    if (!userId || !serverReady) return;
     let closed = false;
     let retry: ReturnType<typeof setTimeout> | null = null;
     let ping: ReturnType<typeof setInterval> | null = null;
@@ -820,7 +821,10 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({
       wsRef.current?.close();
       wsRef.current = null;
     };
-  }, [user, serverReady, handleEvent, recoverIncoming]);
+    // Keyed on the user's ID, not the object: profile refreshes (coins,
+    // check-in, avatar…) replace `user` and used to tear the socket down and
+    // reconnect every time, dropping live events in between.
+  }, [userId, serverReady, handleEvent, recoverIncoming]);
 
   useEffect(() => {
     if (call?.phase !== "connected" && call?.phase !== "reconnecting") return;

@@ -29,6 +29,6 @@
   "seed_data_creation": "Two new registered accounts for regression: qa_iter55_<hex>@linguatest.com (backend test module) and qa_iter55_ob_<hex>@linguatest.com / qa_iter55_ui_<hex>@linguatest.com (UI test) — all with password Test1234!.",
   "retest_needed": false,
   "should_main_agent_self_test": false,
-  "context_for_next_testing_agent": "Backend base URL: https://gmail-notify-service.preview.emergentagent.com. Regression suite lives at backend/tests/test_iteration55_auth_regression.py — reuse it for any future auth changes. UI test verifies /dev-diagnostics (dev-only route bounces to '/' when __DEV__ is false; web preview is __DEV__=true so it renders). No hardcoded URL fallbacks in api.ts — do not reintroduce them.",
+  "context_for_next_testing_agent": "Backend base URL: https://apk-build-debug-1.preview.emergentagent.com. Regression suite lives at backend/tests/test_iteration55_auth_regression.py — reuse it for any future auth changes. UI test verifies /dev-diagnostics (dev-only route bounces to '/' when __DEV__ is false; web preview is __DEV__=true so it renders). No hardcoded URL fallbacks in api.ts — do not reintroduce them.",
   "rca_of_issue": "N/A — this iteration was regression verification of a previously-shipped fix. No new bug found."
 }

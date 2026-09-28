@@ -6,6 +6,7 @@ import re
 import regex
 
 from dotenv import load_dotenv
+from optional_deps import require_optional
 
 load_dotenv()
 ROOT = Path(os.getenv("CAPTION_MODEL_ROOT", Path(__file__).parent / "caption_models")) / "translation"
@@ -50,8 +51,7 @@ def load():
     global _model, _tokenizer, _detector, _traditional, _simplified
     if _model is not None:
         return
-    import ctranslate2
-    import sentencepiece
+    ctranslate2, sentencepiece = require_optional("ctranslate2", "sentencepiece")
     from langid.langid import LanguageIdentifier, model
     from opencc import OpenCC
 
