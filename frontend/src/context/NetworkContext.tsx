@@ -59,6 +59,14 @@ interface NetworkState {
 
 const NetworkContext = createContext<NetworkState | null>(null);
 
+/**
+ * How many exhausted requests/probes must fail before the app declares an
+ * outage. `api.ts` already retries every idempotent call three times with
+ * backoff before it reports once, so two reports mean the connection is
+ * genuinely gone — not a single dropped packet during a Wi-Fi hand-off.
+ */
+const FAILURE_THRESHOLD = 2;
+
 // Cached callable that the api.ts layer imports to report request outcomes
 // without needing React state.
 let externalReportFailure: (kind?: NetFailureKind) => void = () => {};
@@ -124,11 +132,11 @@ export const NetworkProvider: React.FC<{ children: React.ReactNode }> = ({
         goOnline();
       } else {
         failureRun.current += 1;
-        if (failureRun.current >= 3) await classifyOutage();
+        if (failureRun.current >= FAILURE_THRESHOLD) await classifyOutage();
       }
     } catch {
       failureRun.current += 1;
-      if (failureRun.current >= 3) await classifyOutage();
+      if (failureRun.current >= FAILURE_THRESHOLD) await classifyOutage();
     }
   }, [classifyOutage, goOnline]);
 
@@ -142,7 +150,7 @@ export const NetworkProvider: React.FC<{ children: React.ReactNode }> = ({
       }
       failureRun.current += 1;
       // Three back-to-back failures = confidently in an outage.
-      if (failureRun.current >= 3) void classifyOutage(kind);
+      if (failureRun.current >= FAILURE_THRESHOLD) void classifyOutage(kind);
     },
     [classifyOutage],
   );
@@ -164,12 +172,16 @@ export const NetworkProvider: React.FC<{ children: React.ReactNode }> = ({
   // Web: subscribe to navigator.online / offline
   useEffect(() => {
     if (Platform.OS !== "web" || typeof window === "undefined") return;
-    if (navigator.onLine === false) setStatus("device-offline");
+    // Deferred so the very first render is never mutated mid-commit.
+    const initial = setTimeout(() => {
+      if (navigator.onLine === false) setStatus("device-offline");
+    }, 0);
     const onOffline = () => setStatus("device-offline");
     const onOnline = () => goOnline();
     window.addEventListener("offline", onOffline);
     window.addEventListener("online", onOnline);
     return () => {
+      clearTimeout(initial);
       window.removeEventListener("offline", onOffline);
       window.removeEventListener("online", onOnline);
     };

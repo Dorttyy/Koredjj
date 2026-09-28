@@ -7,8 +7,9 @@
  */
 
 import { Ionicons } from "@/src/ui/icons";
+import { useRouter } from "expo-router";
 import React from "react";
-import { Platform, StyleSheet, Text, View } from "react-native";
+import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useNetwork } from "@/src/context/NetworkContext";
@@ -19,6 +20,7 @@ import { hostOf, isEphemeralHost } from "@/src/utils/net-diagnostics";
 export const OfflineBanner: React.FC = () => {
   const { isOnline, status, baseUrl } = useNetwork();
   const { colors } = useTheme();
+  const router = useRouter();
   const insets = useSafeAreaInsets();
   const styles = React.useMemo(() => makeStyles(colors), [colors]);
 
@@ -38,12 +40,17 @@ export const OfflineBanner: React.FC = () => {
     subtitle =
       Platform.OS !== "web" && isEphemeralHost(baseUrl)
         ? `${hostOf(baseUrl)} is a temporary address — deploy, then rebuild`
-        : `${hostOf(baseUrl)} isn't responding — retrying…`;
+        : `${hostOf(baseUrl)} isn't responding — tap to diagnose`;
   }
 
   return (
-    <View
-      pointerEvents="none"
+    <Pressable
+      // Tappable on purpose: on an installed build this banner is the only
+      // entry point to the connection check, which is what turns "it doesn't
+      // work" into an actual diagnosis.
+      accessibilityRole="button"
+      accessibilityLabel={`${title}. ${subtitle}. Tap to run a connection check.`}
+      onPress={() => router.push("/connection-check")}
       style={[
         styles.banner,
         {
@@ -66,7 +73,8 @@ export const OfflineBanner: React.FC = () => {
           {subtitle}
         </Text>
       </View>
-    </View>
+      <Ionicons name="chevron-forward" size={16} color={colors.brand} />
+    </Pressable>
   );
 };
 

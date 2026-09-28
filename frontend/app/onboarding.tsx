@@ -104,14 +104,10 @@ export default function Onboarding() {
         gender,
         interests,
       };
-      let updated: User;
-      try {
-        updated = await api.put<User>("/users/me", payload);
-      } catch {
-        // Retry once after 1s for transient mobile network hiccups
-        await new Promise((r) => setTimeout(r, 1000));
-        updated = await api.put<User>("/users/me", payload);
-      }
+      // `api.put` is idempotent and already retries transport failures three
+      // times with backoff, so a second manual attempt here would only double
+      // the time the button spins before the error is shown.
+      const updated = await api.put<User>("/users/me", payload);
       setUser(updated);
       router.replace("/(tabs)/connect");
     } catch (e) {

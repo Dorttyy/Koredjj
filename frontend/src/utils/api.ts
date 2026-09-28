@@ -76,11 +76,42 @@ export const wsUrl = (): string =>
 export const proRtcUrl = (room: string): string =>
   `${getApiUrl().replace(/^http/, "ws")}/api/pro/rtc/${room}?token=${authToken}`;
 
+/**
+ * Methods that are safe to send again after a transport failure. A retried
+ * POST could create a duplicate message/room/payment, so POST is never
+ * repeated automatically — the screens that need it retry explicitly.
+ */
+const IDEMPOTENT_METHODS = new Set(["GET", "HEAD", "PUT", "PATCH", "DELETE"]);
+/** Pause before each retry (mobile hand-offs recover in well under a second). */
+const RETRY_BACKOFF_MS = [700, 1800];
+/**
+ * Per-attempt deadline. Retryable calls fail fast and try again instead of
+ * burning one long 30s window, which is what made a single dropped packet look
+ * like "the server is down". POST keeps the single long window because it may
+ * be uploading.
+ */
+const RETRY_TIMEOUTS_MS = [15000, 20000, 25000];
+const SINGLE_ATTEMPT_TIMEOUT_MS = 30000;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+export interface RequestOptions {
+  signal?: AbortSignal;
+  /**
+   * Override the attempt count. Use 1 for calls that must fail fast — e.g. the
+   * cold-start session restore, where three retries would hold the splash
+   * screen for a minute before the user ever reaches the login form.
+   */
+  attempts?: number;
+  /** Override the per-attempt deadline in ms. */
+  timeoutMs?: number;
+}
+
 async function request<T>(
   method: string,
   path: string,
   body?: unknown,
-  options?: { signal?: AbortSignal },
+  options?: RequestOptions,
 ): Promise<T> {
   const baseUrl = getApiUrl();
   if (!baseUrl) {
@@ -89,80 +120,101 @@ async function request<T>(
     netFailureReporter("no-backend-url");
     throw makeNetError("no-backend-url");
   }
-  // Hard network timeout so a stalled connection (common on flaky mobile
-  // networks / unreachable host) can NEVER leave the UI hanging forever on a
-  // spinner. Without this, fetch() waits indefinitely. On timeout we surface a
-  // clear, retryable "can't reach the server" error instead of an infinite
-  // loading state (e.g. the onboarding "Start Connecting" button).
-  const REQUEST_TIMEOUT_MS = 30000;
-  const controller = new AbortController();
+  const retryable = IDEMPOTENT_METHODS.has(method.toUpperCase());
+  const attempts = Math.max(
+    1,
+    options?.attempts ?? (retryable ? RETRY_BACKOFF_MS.length + 1 : 1),
+  );
   const external = options?.signal;
-  const onExternalAbort = () => controller.abort();
-  if (external) {
-    if (external.aborted) controller.abort();
-    else external.addEventListener("abort", onExternalAbort, { once: true });
-  }
-  let timedOut = false;
-  const timer = setTimeout(() => {
-    timedOut = true;
-    controller.abort();
-  }, REQUEST_TIMEOUT_MS);
-  let res: Response;
-  try {
-    res = await fetch(`${baseUrl}/api${path}`, {
-      method,
-      signal: controller.signal,
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
-      },
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-    });
-  } catch (err) {
-    // Fetch throws only for network-level failures (DNS, offline, TLS, refused)
-    // or an abort (our timeout, or the caller's own signal).
-    // Caller-initiated cancellation must propagate quietly.
-    if (external?.aborted) {
-      throw err instanceof Error ? err : new Error("Request cancelled");
+  let lastKind: NetFailureKind = "unreachable";
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    // Hard network timeout so a stalled connection (common on flaky mobile
+    // networks / unreachable host) can NEVER leave the UI hanging forever on a
+    // spinner. Without this, fetch() waits indefinitely.
+    const timeoutMs =
+      options?.timeoutMs ??
+      (attempts > 1
+        ? (RETRY_TIMEOUTS_MS[attempt] ?? SINGLE_ATTEMPT_TIMEOUT_MS)
+        : SINGLE_ATTEMPT_TIMEOUT_MS);
+    const controller = new AbortController();
+    const onExternalAbort = () => controller.abort();
+    if (external) {
+      if (external.aborted) controller.abort();
+      else external.addEventListener("abort", onExternalAbort, { once: true });
     }
-    if (timedOut) {
-      netFailureReporter("timeout");
-      throw makeNetError("timeout", baseUrl);
-    }
-    // RN reports every transport error as "Network request failed", so ask the
-    // OS whether the device is actually offline before choosing the message.
-    // The same verdict is handed to NetworkContext so the offline banner can
-    // say "can't reach the server" instead of "no network connection".
-    const online = await deviceHasInternet();
-    const kind: NetFailureKind = online === false ? "offline" : "unreachable";
-    netFailureReporter(kind);
-    throw makeNetError(kind, baseUrl);
-  } finally {
-    clearTimeout(timer);
-    if (external) external.removeEventListener("abort", onExternalAbort);
-  }
-  // Server reachable — clear any lingering offline state.
-  netSuccessReporter();
-  if (!res.ok) {
-    let detail = `Request failed (${res.status})`;
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, timeoutMs);
+    let res: Response | null = null;
     try {
-      const data = await res.json();
-      if (typeof data.detail === "string") detail = data.detail;
-    } catch {
-      // keep default detail
+      res = await fetch(`${baseUrl}/api${path}`, {
+        method,
+        signal: controller.signal,
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+        },
+        body: body !== undefined ? JSON.stringify(body) : undefined,
+      });
+    } catch (err) {
+      // Fetch throws only for network-level failures (DNS, offline, TLS,
+      // refused) or an abort (our timeout, or the caller's own signal).
+      // Caller-initiated cancellation must propagate quietly and never retry.
+      if (external?.aborted) {
+        throw err instanceof Error ? err : new Error("Request cancelled");
+      }
+      if (timedOut) {
+        lastKind = "timeout";
+      } else {
+        // RN reports every transport error as "Network request failed", so ask
+        // the OS whether the device is actually offline before choosing the
+        // message. The same verdict is handed to NetworkContext so the offline
+        // banner can say "can't reach the server" instead of "no network".
+        const online = await deviceHasInternet();
+        lastKind = online === false ? "offline" : "unreachable";
+      }
+      const isLastAttempt = attempt === attempts - 1;
+      if (!isLastAttempt) {
+        await sleep(RETRY_BACKOFF_MS[attempt] ?? 1000);
+        continue;
+      }
+      // Only a fully exhausted request counts as an outage, so one flaky
+      // packet can no longer paint the whole app as disconnected.
+      netFailureReporter(lastKind);
+      throw makeNetError(lastKind, baseUrl);
+    } finally {
+      clearTimeout(timer);
+      if (external) external.removeEventListener("abort", onExternalAbort);
     }
-    throw new ApiError(detail, "http", { status: res.status, baseUrl });
+    if (!res) continue; // unreachable; keeps the compiler happy after `continue`
+    // Server reachable — clear any lingering offline state.
+    netSuccessReporter();
+    if (!res.ok) {
+      let detail = `Request failed (${res.status})`;
+      try {
+        const data = await res.json();
+        if (typeof data.detail === "string") detail = data.detail;
+      } catch {
+        // keep default detail
+      }
+      throw new ApiError(detail, "http", { status: res.status, baseUrl });
+    }
+    return res.json();
   }
-  return res.json();
+  netFailureReporter(lastKind);
+  throw makeNetError(lastKind, baseUrl);
 }
 
 export const api = {
-  get: <T>(path: string) => request<T>("GET", path),
-  post: <T>(path: string, body?: unknown, options?: { signal?: AbortSignal }) => request<T>("POST", path, body, options),
-  put: <T>(path: string, body?: unknown) => request<T>("PUT", path, body),
-  patch: <T>(path: string, body?: unknown) => request<T>("PATCH", path, body),
-  delete: <T>(path: string) => request<T>("DELETE", path),
+  get: <T>(path: string, options?: RequestOptions) => request<T>("GET", path, undefined, options),
+  post: <T>(path: string, body?: unknown, options?: RequestOptions) => request<T>("POST", path, body, options),
+  put: <T>(path: string, body?: unknown, options?: RequestOptions) => request<T>("PUT", path, body, options),
+  patch: <T>(path: string, body?: unknown, options?: RequestOptions) => request<T>("PATCH", path, body, options),
+  delete: <T>(path: string, options?: RequestOptions) => request<T>("DELETE", path, undefined, options),
 };
 
 export interface User {

@@ -362,15 +362,28 @@ export default function AuthScreen() {
                     {error}
                   </Text>
                   {retryable && (
-                    <Pressable
-                      testID="auth-retry-btn"
-                      accessibilityRole="button"
-                      disabled={bothBusy}
-                      onPress={submit}
-                      hitSlop={8}
-                    >
-                      <Text style={styles.retryText}>Try again</Text>
-                    </Pressable>
+                    <View style={{ flexDirection: "row", gap: spacing.md }}>
+                      <Pressable
+                        testID="auth-retry-btn"
+                        accessibilityRole="button"
+                        disabled={bothBusy}
+                        onPress={submit}
+                        hitSlop={8}
+                      >
+                        <Text style={styles.retryText}>Try again</Text>
+                      </Pressable>
+                      {/* Sign-in is where an unreachable server hurts most and
+                          where no session exists yet, so offer the diagnosis
+                          right here instead of only in Settings. */}
+                      <Pressable
+                        testID="auth-connection-check-btn"
+                        accessibilityRole="button"
+                        onPress={() => router.push("/connection-check")}
+                        hitSlop={8}
+                      >
+                        <Text style={styles.retryText}>Connection check</Text>
+                      </Pressable>
+                    </View>
                   )}
                 </View>
               </View>

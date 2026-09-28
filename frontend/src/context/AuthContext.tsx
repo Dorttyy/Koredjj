@@ -91,7 +91,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (!isCurrent()) return;
         if (token) {
           setAuthToken(token);
-          const me = await api.get<User>("/auth/me");
+          // Fail fast on a cold start: retrying here would keep the splash
+          // screen up for a minute when the server is unreachable. One 12s
+          // attempt is enough — the stored token is preserved unless the
+          // server actually rejects it (401/403), so the user simply lands on
+          // the login screen and the offline banner explains why.
+          const me = await api.get<User>("/auth/me", { attempts: 1, timeoutMs: 12000 });
           if (!isCurrent()) return;
           if (me.is_guest) {
             setAuthToken(null);

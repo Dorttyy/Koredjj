@@ -791,6 +791,33 @@ export default function Profile() {
                   </Text>
                 </View>
               </View>
+              <View style={styles.settingDivider} />
+              {/* Reachable in release builds on purpose: an installed app has
+                  no console, so this is the only way a user can tell us what
+                  their phone actually sees when the server seems unreachable. */}
+              <Pressable
+                testID="settings-connection-check"
+                style={styles.settingRow}
+                onPress={() => {
+                  setSettingsOpen(false);
+                  setTimeout(() => router.push("/connection-check"), 250);
+                }}
+              >
+                <View style={styles.settingIcon}>
+                  <Ionicons name="pulse" size={18} color={colors.brand} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.settingTitle}>Connection check</Text>
+                  <Text style={styles.settingSub}>
+                    Test the server, see why it fails, copy a report
+                  </Text>
+                </View>
+                <Ionicons
+                  name="chevron-forward"
+                  size={18}
+                  color={colors.onSurfaceSecondary}
+                />
+              </Pressable>
             </View>
 
             <Pressable testID="logout-btn" style={styles.logoutBtn} onPress={doLogout}>

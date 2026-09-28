@@ -119,6 +119,9 @@ export interface HealthResult {
   latencyMs: number;
   kind?: NetFailureKind;
   detail?: string;
+  /** Raw transport error, kept verbatim for the connection-check screen. */
+  errorName?: string;
+  errorMessage?: string;
 }
 
 /**
@@ -146,14 +149,131 @@ export const checkBackendHealth = async (
       signal: controller.signal,
     });
     return { ok: res.ok, status: res.status, latencyMs: Date.now() - started };
-  } catch {
+  } catch (err) {
     const kind: NetFailureKind = timedOut
       ? "timeout"
       : (await deviceHasInternet()) === false
         ? "offline"
         : "unreachable";
-    return { ok: false, latencyMs: Date.now() - started, kind, detail: messageFor(kind, baseUrl) };
+    return {
+      ok: false,
+      latencyMs: Date.now() - started,
+      kind,
+      detail: messageFor(kind, baseUrl),
+      errorName: err instanceof Error ? err.name : typeof err,
+      errorMessage: err instanceof Error ? err.message : String(err),
+    };
   } finally {
     clearTimeout(timer);
   }
 };
+
+export interface ProbeResult {
+  label: string;
+  url: string;
+  ok: boolean;
+  status?: number;
+  latencyMs: number;
+  /** Short body excerpt — only used for the Cloudflare trace control probe. */
+  body?: string;
+  errorName?: string;
+  errorMessage?: string;
+  timedOut?: boolean;
+}
+
+/**
+ * Raw single-URL probe used by the in-app connection check.
+ *
+ * Reports the verbatim error so an installed build can explain ITSELF instead
+ * of us having to guess: pairing our own host with neutral control URLs is the
+ * only way to tell "this phone has no working internet" apart from "this phone
+ * cannot reach *our* host" (VPN, DNS filtering, carrier/ISP block, captive
+ * portal) without attaching a debugger to the user's device.
+ */
+export const probeUrl = async (
+  label: string,
+  url: string,
+  timeoutMs = 12000,
+): Promise<ProbeResult> => {
+  const started = Date.now();
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  try {
+    const res = await fetch(url, { method: "GET", signal: controller.signal });
+    let body: string | undefined;
+    try {
+      body = (await res.text()).slice(0, 400);
+    } catch {
+      body = undefined;
+    }
+    return {
+      label,
+      url,
+      ok: res.status >= 200 && res.status < 500,
+      status: res.status,
+      latencyMs: Date.now() - started,
+      body,
+    };
+  } catch (err) {
+    return {
+      label,
+      url,
+      ok: false,
+      latencyMs: Date.now() - started,
+      timedOut,
+      errorName: err instanceof Error ? err.name : typeof err,
+      errorMessage: err instanceof Error ? err.message : String(err),
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
+/** Neutral endpoints that prove whether the device has *any* working internet. */
+export const CONTROL_PROBES: { label: string; url: string }[] = [
+  // Tiny 204, no payload, reachable worldwide — "is there internet at all?"
+  { label: "Internet (Google 204)", url: "https://clients3.google.com/generate_204" },
+  // Returns the client IP + Cloudflare colo. Our backend sits behind
+  // Cloudflare, so if this fails while Google works, the block is specific to
+  // Cloudflare (VPN / ISP / DNS filtering) rather than to our server.
+  { label: "Cloudflare edge", url: "https://www.cloudflare.com/cdn-cgi/trace" },
+];
+
+export interface NetworkSnapshot {
+  type: string;
+  isConnected: string;
+  isInternetReachable: string;
+}
+
+/** Human-readable OS network state for the connection-check screen. */
+export const networkSnapshot = async (): Promise<NetworkSnapshot> => {
+  if (Platform.OS === "web") {
+    return {
+      type: "browser",
+      isConnected:
+        typeof navigator !== "undefined" && typeof navigator.onLine === "boolean"
+          ? String(navigator.onLine)
+          : "unknown",
+      isInternetReachable: "unknown",
+    };
+  }
+  try {
+    const state = await Network.getNetworkStateAsync();
+    return {
+      type: String(state.type ?? "unknown"),
+      isConnected: String(state.isConnected ?? "unknown"),
+      isInternetReachable: String(state.isInternetReachable ?? "unknown"),
+    };
+  } catch (err) {
+    return {
+      type: `unavailable (${err instanceof Error ? err.name : "error"})`,
+      isConnected: "unknown",
+      isInternetReachable: "unknown",
+    };
+  }
+};
+
