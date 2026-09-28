@@ -98,7 +98,8 @@
             "enableProguardInReleaseBuilds": false
           }
         }
-      ]
+      ],
+      "./plugins/withResilientOkHttp"
     ],
     "experiments": {
       "typedRoutes": true

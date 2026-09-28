@@ -1,3 +1,6 @@
+## 2026-09-28c — REAL root cause of APK "Can't reach the server" (native OkHttp)
+- RN/Expo Android HTTP client: no timeouts + no HTTP/2 ping; a silently dropped idle HTTP/2 connection (Cloudflare) was reused forever -> all requests after sign-up hung. Reproduced vs live deploy (okhttp 4.9.2 + blackhole proxy). Fixed by plugins/withResilientOkHttp.js (OkHttpClientFactory: ping 10s, connect 15s, read/write 60s, pool keep-alive 60s). Also covers expo fetch + WebSockets. Needs NEW APK build. Deployed backend = https://apk-build-debug-1.emergent.host (healthy).
+
 ## 2026-09-28b — APK "Can't reach the server" (deploy hardening + connection engine v3)
 - Old deploy host link-bridge-25.emergent.host answers 400 "Application not found" (gone). User must Re-deploy + rebuild APK; user did not remember the new URL, so app.json `extra.fallbackBackendUrls` is supported but EMPTY — fill it with the live *.emergent.host URL when known.
 - Backend boots with NO env (db.py local fallback only when MONGO_URL unset; DB_NAME from env/URI), JWT_SECRET env -> persisted Mongo app_config{_id:jwt_secret}; seeding in guarded background task; AUTO_PROVISION_MODELS default false; optional ML via optional_deps.py; admin seed skipped without ADMIN_PASSWORD.
