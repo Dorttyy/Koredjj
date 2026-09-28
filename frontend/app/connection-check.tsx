@@ -32,13 +32,23 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
+import { KeyboardAvoidingView } from "@/src/components/layout/KeyboardAvoidingView";
 
 import { SafeAreaView } from "@/src/components/layout/SafeAreaView";
 import { useTheme } from "@/src/context/ThemeContext";
 import { fonts, radius, spacing, ThemeColors } from "@/src/theme";
-import { getApiUrl, getAuthToken } from "@/src/utils/api";
+import {
+  currentAddressSource,
+  getApiUrl,
+  getAuthToken,
+  getManualAddress,
+  lastTransportFailure,
+  setManualAddress,
+} from "@/src/utils/api";
+import { useNetwork } from "@/src/context/NetworkContext";
 import {
   CONTROL_PROBES,
   hostOf,
@@ -49,12 +59,17 @@ import {
   type ProbeResult,
 } from "@/src/utils/net-diagnostics";
 
-const sourceOfBaseUrl = (): string => {
-  if (Platform.OS === "web") return "window.location.origin (web)";
-  if (process.env.EXPO_PUBLIC_BACKEND_URL) return "EXPO_PUBLIC_BACKEND_URL (baked at build time)";
-  if (Constants.expoConfig?.extra?.backendUrl) return "app config extra.backendUrl";
-  return "none — this build has no server address";
+const SOURCE_LABELS: Record<string, string> = {
+  manual: "manual address you entered",
+  "last-good": "last address that worked",
+  "build-env": "EXPO_PUBLIC_BACKEND_URL (baked at build time)",
+  "app-config": "app config extra.backendUrl",
+  "web-origin": "window.location.origin (web)",
+  none: "none — this build has no server address",
 };
+
+const sourceOfBaseUrl = (): string =>
+  SOURCE_LABELS[currentAddressSource()] ?? currentAddressSource();
 
 /** Plain-language conclusion so the user is not left reading raw errors. */
 const verdictFor = (
@@ -116,6 +131,10 @@ export default function ConnectionCheck() {
   const [net, setNet] = useState<NetworkSnapshot | null>(null);
   const [running, setRunning] = useState(false);
   const [copied, setCopied] = useState(false);
+  const { retry: retryConnection, status } = useNetwork();
+  const [manual, setManual] = useState<string>(() => getManualAddress());
+  const [manualBusy, setManualBusy] = useState(false);
+  const [manualNote, setManualNote] = useState<string | null>(null);
 
   const baseUrl = getApiUrl();
   // Browsers block cross-origin reads without CORS headers, so the neutral
@@ -141,6 +160,39 @@ export default function ConnectionCheck() {
     setControls(rest);
     setRunning(false);
   }, [baseUrl, controlProbes]);
+
+  /**
+   * Point this installed build at a different backend without rebuilding it.
+   * This is the escape hatch for a host that a particular phone cannot reach
+   * (DNS filtering, a VPN, an operator block) or for an address that changed
+   * after the app was published.
+   */
+  const applyManual = useCallback(async () => {
+    setManualBusy(true);
+    setManualNote(null);
+    try {
+      const saved = await setManualAddress(manual);
+      setManual(saved);
+      const reachable = await retryConnection();
+      // Report the address that ACTUALLY answered: the engine falls over to
+      // the next candidate, so "connected" may well mean a different host.
+      const inUse = getApiUrl();
+      setManualNote(
+        !saved
+          ? "Custom address cleared — using the address this build shipped with."
+          : !reachable
+            ? `${hostOf(saved)} did not answer. Check the address and try again.`
+            : inUse === saved
+              ? `Connected to ${hostOf(saved)}.`
+              : `${hostOf(saved)} did not answer — still using ${hostOf(inUse)}.`,
+      );
+      await run();
+    } catch (err) {
+      setManualNote(err instanceof Error ? err.message : "Could not save that address.");
+    } finally {
+      setManualBusy(false);
+    }
+  }, [manual, retryConnection, run]);
 
   useEffect(() => {
     // Deferred by a tick so the first commit is never mutated synchronously.
@@ -188,9 +240,16 @@ export default function ConnectionCheck() {
                 : ""
             }`,
         ),
+        `Status: ${status}`,
+        (() => {
+          const failure = lastTransportFailure();
+          return failure
+            ? `Last transport error: ${failure.kind} ${failure.errorName ?? ""} ${failure.errorMessage ?? ""}`.trim()
+            : "Last transport error: none";
+        })(),
         `Verdict: ${verdict.title}`,
       ].join("\n"),
-    [rows, probeRows, verdict.title],
+    [rows, probeRows, verdict.title, status],
   );
 
   const copy = useCallback(async () => {
@@ -212,7 +271,8 @@ export default function ConnectionCheck() {
         <View style={{ width: 40 }} />
       </View>
 
-      <ScrollView contentContainerStyle={styles.body}>
+      <KeyboardAvoidingView style={{ flex: 1 }}>
+      <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
         <View style={[styles.card, styles.verdictCard]}>
           <Text style={styles.verdictTitle} testID="diag-verdict">
             {verdict.title}
@@ -249,6 +309,44 @@ export default function ConnectionCheck() {
           ))}
         </View>
 
+        <Text style={styles.sectionTitle}>Server address</Text>
+        <View style={styles.card}>
+          <Text style={styles.rowLabel}>
+            Use a different server (advanced)
+          </Text>
+          <TextInput
+            testID="diag-manual-input"
+            value={manual}
+            onChangeText={setManual}
+            placeholder="https://my-app.emergent.host"
+            placeholderTextColor={colors.onSurfaceSecondary}
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="url"
+            style={styles.input}
+          />
+          <Text style={styles.note}>
+            Leave empty and save to go back to the address this build shipped with.
+          </Text>
+          {!!manualNote && (
+            <Text style={styles.manualNote} testID="diag-manual-note">
+              {manualNote}
+            </Text>
+          )}
+          <Pressable
+            testID="diag-manual-save"
+            style={styles.buttonGhost}
+            onPress={applyManual}
+            disabled={manualBusy}
+          >
+            {manualBusy ? (
+              <ActivityIndicator color={colors.onSurface} />
+            ) : (
+              <Text style={styles.buttonGhostText}>Save & test this address</Text>
+            )}
+          </Pressable>
+        </View>
+
         <Pressable testID="diag-rerun" style={styles.button} onPress={run} disabled={running}>
           {running ? (
             <ActivityIndicator color={colors.onBrand} />
@@ -267,6 +365,7 @@ export default function ConnectionCheck() {
           This report contains no passwords, tokens or personal data.
         </Text>
       </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -325,4 +424,16 @@ const makeStyles = (colors: ThemeColors) =>
     },
     buttonGhostText: { fontFamily: fonts.textSemi, fontSize: 15, color: colors.onSurface },
     note: { fontFamily: fonts.text, fontSize: 11, color: colors.onSurfaceSecondary },
+    manualNote: { fontFamily: fonts.textSemi, fontSize: 12, color: colors.brand },
+    input: {
+      minHeight: 48,
+      borderRadius: radius.lg,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.surface,
+      paddingHorizontal: spacing.md,
+      fontFamily: fonts.text,
+      fontSize: 14,
+      color: colors.onSurface,
+    },
   });

@@ -34,6 +34,7 @@ import { stopVoicePlayback } from "@/src/utils/voice-playback";
 import { useCallTones } from "@/src/hooks/use-call-tones";
 import { VipBadge } from "@/src/components/Badges";
 import { useAuth } from "@/src/context/AuthContext";
+import { useNetwork } from "@/src/context/NetworkContext";
 import { useTheme } from "@/src/context/ThemeContext";
 import { fonts, radius, spacing, ThemeColors } from "@/src/theme";
 import { api, User, wsUrl } from "@/src/utils/api";
@@ -152,6 +153,8 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
   const { user } = useAuth();
+  // `ready` flips true only after the backend has answered at least once.
+  const { ready: serverReady } = useNetwork();
   const { colors } = useTheme();
   const wsRef = useRef<WebSocket | null>(null);
   const subscribersRef = useRef<Set<SignalHandler>>(new Set());
@@ -745,7 +748,11 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({
   }, [handleEvent, sendSignal]);
 
   useEffect(() => {
-    if (!user) return;
+    // Gate the socket on a backend that has actually answered once. On Android
+    // a WebSocket permanently occupies one of OkHttp's five per-host slots, so
+    // opening (and endlessly retrying) it while HTTP is broken would starve
+    // real requests and turn a server outage into a frozen app.
+    if (!user || !serverReady) return;
     let closed = false;
     let retry: ReturnType<typeof setTimeout> | null = null;
     let ping: ReturnType<typeof setInterval> | null = null;
@@ -813,7 +820,7 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({
       wsRef.current?.close();
       wsRef.current = null;
     };
-  }, [user, handleEvent, recoverIncoming]);
+  }, [user, serverReady, handleEvent, recoverIncoming]);
 
   useEffect(() => {
     if (call?.phase !== "connected" && call?.phase !== "reconnecting") return;

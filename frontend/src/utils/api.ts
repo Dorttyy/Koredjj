@@ -1,220 +1,68 @@
-import { Platform } from "react-native";
-import Constants from "expo-constants";
-import {
-  ApiError,
-  deviceHasInternet,
-  makeNetError,
-  type NetFailureKind,
-} from "@/src/utils/net-diagnostics";
-
 /**
- * Single source of truth for the backend base URL (REST + WebSockets + assets).
+ * Public backend client.
  *
- * Resolution order on native (standalone APK / IPA / dev client):
- *   1. `process.env.EXPO_PUBLIC_BACKEND_URL` — inlined into the JS bundle at
- *      build time. The publish pipeline rewrites this to the deployed
- *      `https://<app>.emergent.host` URL, so production builds get it for free.
- *   2. `Constants.expoConfig.extra.backendUrl` — the same value carried through
- *      `app.config.js`, as a backup for runtimes where the inlined env var was
- *      stripped (older manifests, OTA updates).
+ * The connection engine itself now lives in `src/net/` (address resolution +
+ * transport). This module is the stable, app-facing surface: the `api` verbs,
+ * the URL helpers and every response type. Keeping the surface unchanged means
+ * the rebuilt engine reached all 273 call sites across the app without
+ * touching a single screen.
  *
- * NEVER hardcode a fallback here. Preview/dev hosts are ephemeral (they change
- * on every workspace fork and go away when the workspace sleeps); an installed
- * APK baked with one can never reach a server, which surfaces as the classic
- * "Can't reach the server" on a real device. An empty string is returned
- * instead so the failure is reported honestly as a misconfigured build.
- * Loopback/LAN hosts are ignored on native for the same reason — a phone can
- * never reach the build machine's localhost.
+ * - WHERE we connect  -> src/net/server-address.ts
+ * - HOW we connect    -> src/net/transport.ts (queue, retries, failover)
+ * - WHY it failed     -> src/utils/net-diagnostics.ts (classification + copy)
  */
-export const getApiUrl = (): string => {
-  // On web, always use window.location.origin so browser preview / subdomains / proxies never fail
-  if (Platform.OS === "web" && typeof window !== "undefined" && window.location?.origin) {
-    return window.location.origin.replace(/\/+$/, "");
-  }
-  const candidates = [
-    process.env.EXPO_PUBLIC_BACKEND_URL,
-    Constants.expoConfig?.extra?.backendUrl,
-    (Constants as any).manifest?.extra?.backendUrl,
-    (Constants as any).manifest2?.extra?.expoClient?.extra?.backendUrl,
-  ];
-  for (const candidate of candidates) {
-    const value = typeof candidate === "string" ? candidate.trim() : "";
-    if (!value) continue;
-    if (/^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|10\.0\.2\.2)(:|\/|$)/i.test(value)) {
-      continue;
-    }
-    return value.replace(/\/+$/, "");
-  }
-  return "";
+
+import {
+  currentAddress,
+  currentAddressSource,
+  getManualAddress,
+  hydrateServerAddress,
+  normalizeAddress,
+  setManualAddress,
+  type AddressSource,
+} from "@/src/net/server-address";
+import {
+  bindNetworkTelemetry,
+  getAuthToken,
+  lastTransportFailure,
+  probeServer,
+  send,
+  setAuthToken,
+  type HealthProbe,
+  type RequestOptions,
+} from "@/src/net/transport";
+
+/** Base URL every request, socket and media asset is built from ("" when the
+ *  build has no server address at all). */
+export const getApiUrl = (): string => currentAddress();
+
+export {
+  bindNetworkTelemetry,
+  currentAddressSource,
+  getAuthToken,
+  getManualAddress,
+  hydrateServerAddress,
+  lastTransportFailure,
+  normalizeAddress,
+  probeServer,
+  setAuthToken,
+  setManualAddress,
 };
-
-let authToken: string | null = null;
-
-// Bridge to NetworkContext so we can flip offline state on network-level
-// failures without turning `request()` into a hook consumer. Set from
-// `NetworkProvider`; noop before boot.
-let netFailureReporter: (kind?: NetFailureKind) => void = () => {};
-let netSuccessReporter: () => void = () => {};
-export const bindNetworkTelemetry = (
-  failure: (kind?: NetFailureKind) => void,
-  success: () => void,
-) => {
-  netFailureReporter = failure;
-  netSuccessReporter = success;
-};
-
-export const setAuthToken = (token: string | null) => {
-  authToken = token;
-};
-
-export const getAuthToken = () => authToken;
+export type { AddressSource, HealthProbe, RequestOptions };
 
 export const wsUrl = (): string =>
-  `${getApiUrl().replace(/^http/, "ws")}/api/ws?token=${authToken}`;
+  `${getApiUrl().replace(/^http/, "ws")}/api/ws?token=${getAuthToken()}`;
 
 // Room-based signaling socket for the Pro classroom (WebRTC + in-call chat).
 export const proRtcUrl = (room: string): string =>
-  `${getApiUrl().replace(/^http/, "ws")}/api/pro/rtc/${room}?token=${authToken}`;
-
-/**
- * Methods that are safe to send again after a transport failure. A retried
- * POST could create a duplicate message/room/payment, so POST is never
- * repeated automatically — the screens that need it retry explicitly.
- */
-const IDEMPOTENT_METHODS = new Set(["GET", "HEAD", "PUT", "PATCH", "DELETE"]);
-/** Pause before each retry (mobile hand-offs recover in well under a second). */
-const RETRY_BACKOFF_MS = [700, 1800];
-/**
- * Per-attempt deadline. Retryable calls fail fast and try again instead of
- * burning one long 30s window, which is what made a single dropped packet look
- * like "the server is down". POST keeps the single long window because it may
- * be uploading.
- */
-const RETRY_TIMEOUTS_MS = [15000, 20000, 25000];
-const SINGLE_ATTEMPT_TIMEOUT_MS = 30000;
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-export interface RequestOptions {
-  signal?: AbortSignal;
-  /**
-   * Override the attempt count. Use 1 for calls that must fail fast — e.g. the
-   * cold-start session restore, where three retries would hold the splash
-   * screen for a minute before the user ever reaches the login form.
-   */
-  attempts?: number;
-  /** Override the per-attempt deadline in ms. */
-  timeoutMs?: number;
-}
-
-async function request<T>(
-  method: string,
-  path: string,
-  body?: unknown,
-  options?: RequestOptions,
-): Promise<T> {
-  const baseUrl = getApiUrl();
-  if (!baseUrl) {
-    // No server address in this build — a configuration problem, not a
-    // connectivity problem. Say so instead of blaming the user's network.
-    netFailureReporter("no-backend-url");
-    throw makeNetError("no-backend-url");
-  }
-  const retryable = IDEMPOTENT_METHODS.has(method.toUpperCase());
-  const attempts = Math.max(
-    1,
-    options?.attempts ?? (retryable ? RETRY_BACKOFF_MS.length + 1 : 1),
-  );
-  const external = options?.signal;
-  let lastKind: NetFailureKind = "unreachable";
-
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    // Hard network timeout so a stalled connection (common on flaky mobile
-    // networks / unreachable host) can NEVER leave the UI hanging forever on a
-    // spinner. Without this, fetch() waits indefinitely.
-    const timeoutMs =
-      options?.timeoutMs ??
-      (attempts > 1
-        ? (RETRY_TIMEOUTS_MS[attempt] ?? SINGLE_ATTEMPT_TIMEOUT_MS)
-        : SINGLE_ATTEMPT_TIMEOUT_MS);
-    const controller = new AbortController();
-    const onExternalAbort = () => controller.abort();
-    if (external) {
-      if (external.aborted) controller.abort();
-      else external.addEventListener("abort", onExternalAbort, { once: true });
-    }
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      controller.abort();
-    }, timeoutMs);
-    let res: Response | null = null;
-    try {
-      res = await fetch(`${baseUrl}/api${path}`, {
-        method,
-        signal: controller.signal,
-        headers: {
-          Accept: "application/json",
-          "Content-Type": "application/json",
-          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
-        },
-        body: body !== undefined ? JSON.stringify(body) : undefined,
-      });
-    } catch (err) {
-      // Fetch throws only for network-level failures (DNS, offline, TLS,
-      // refused) or an abort (our timeout, or the caller's own signal).
-      // Caller-initiated cancellation must propagate quietly and never retry.
-      if (external?.aborted) {
-        throw err instanceof Error ? err : new Error("Request cancelled");
-      }
-      if (timedOut) {
-        lastKind = "timeout";
-      } else {
-        // RN reports every transport error as "Network request failed", so ask
-        // the OS whether the device is actually offline before choosing the
-        // message. The same verdict is handed to NetworkContext so the offline
-        // banner can say "can't reach the server" instead of "no network".
-        const online = await deviceHasInternet();
-        lastKind = online === false ? "offline" : "unreachable";
-      }
-      const isLastAttempt = attempt === attempts - 1;
-      if (!isLastAttempt) {
-        await sleep(RETRY_BACKOFF_MS[attempt] ?? 1000);
-        continue;
-      }
-      // Only a fully exhausted request counts as an outage, so one flaky
-      // packet can no longer paint the whole app as disconnected.
-      netFailureReporter(lastKind);
-      throw makeNetError(lastKind, baseUrl);
-    } finally {
-      clearTimeout(timer);
-      if (external) external.removeEventListener("abort", onExternalAbort);
-    }
-    if (!res) continue; // unreachable; keeps the compiler happy after `continue`
-    // Server reachable — clear any lingering offline state.
-    netSuccessReporter();
-    if (!res.ok) {
-      let detail = `Request failed (${res.status})`;
-      try {
-        const data = await res.json();
-        if (typeof data.detail === "string") detail = data.detail;
-      } catch {
-        // keep default detail
-      }
-      throw new ApiError(detail, "http", { status: res.status, baseUrl });
-    }
-    return res.json();
-  }
-  netFailureReporter(lastKind);
-  throw makeNetError(lastKind, baseUrl);
-}
+  `${getApiUrl().replace(/^http/, "ws")}/api/pro/rtc/${room}?token=${getAuthToken()}`;
 
 export const api = {
-  get: <T>(path: string, options?: RequestOptions) => request<T>("GET", path, undefined, options),
-  post: <T>(path: string, body?: unknown, options?: RequestOptions) => request<T>("POST", path, body, options),
-  put: <T>(path: string, body?: unknown, options?: RequestOptions) => request<T>("PUT", path, body, options),
-  patch: <T>(path: string, body?: unknown, options?: RequestOptions) => request<T>("PATCH", path, body, options),
-  delete: <T>(path: string, options?: RequestOptions) => request<T>("DELETE", path, undefined, options),
+  get: <T>(path: string, options?: RequestOptions) => send<T>("GET", path, undefined, options),
+  post: <T>(path: string, body?: unknown, options?: RequestOptions) => send<T>("POST", path, body, options),
+  put: <T>(path: string, body?: unknown, options?: RequestOptions) => send<T>("PUT", path, body, options),
+  patch: <T>(path: string, body?: unknown, options?: RequestOptions) => send<T>("PATCH", path, body, options),
+  delete: <T>(path: string, options?: RequestOptions) => send<T>("DELETE", path, undefined, options),
 };
 
 export interface User {

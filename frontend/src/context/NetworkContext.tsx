@@ -1,25 +1,24 @@
 /**
- * NetworkContext — app-wide connectivity awareness that distinguishes
- * "the phone has no internet" from "the server this build points at is not
- * answering". Those two are completely different problems and must never share
- * the same message: telling a user with full signal to "check your connection"
- * hides a broken/missing deployment (the classic symptom of an installed APK
- * built before the backend was deployed).
+ * NetworkContext — the React face of the rebuilt connection layer.
  *
- * Sources of truth
- *  - Device reachability: `expo-network` (`deviceHasInternet()` + a live
- *    `addNetworkStateListener` subscription on native, `online`/`offline`
- *    window events on web) — this alone decides `device-offline`.
- *  - Server reachability: outcomes reported by `src/utils/api.ts` plus an
- *    unauthenticated `GET /api/health` probe.
+ * Responsibilities
+ *  1. BOOTSTRAP: on cold start it loads any saved server address and probes
+ *     the backend ONCE before the app starts hammering it. The result is what
+ *     gates the WebSocket, so a socket can never occupy one of Android's five
+ *     per-host OkHttp slots while HTTP is still broken.
+ *  2. CLASSIFY: it never says "no network connection" unless the OS confirms
+ *     the device is offline. A reachable phone with an unreachable backend is
+ *     reported as `server-down`, and a build with no address at all as
+ *     `no-server-url` — three different problems, three different messages.
+ *  3. RECOVER: while in an outage it re-probes every 5s (which also walks the
+ *     other candidate addresses), and on native it reacts to real radio
+ *     changes instantly instead of waiting for requests to fail.
  *
- * `status` is therefore one of:
- *   "online"        — server answered (or nothing has failed yet)
- *   "device-offline" — the OS says there is no internet
- *   "server-down"   — device online, but the backend host is unreachable
- *   "no-server-url" — this build carries no backend address at all
+ * Sources of truth: `expo-network` for the device, `src/net/transport`'s
+ * probe + request outcomes for the server.
  */
 
+import * as Network from "expo-network";
 import React, {
   createContext,
   useCallback,
@@ -29,46 +28,47 @@ import React, {
   useState,
 } from "react";
 import { Platform } from "react-native";
-import * as Network from "expo-network";
-import { getApiUrl } from "@/src/utils/api";
+
+import { getApiUrl, hydrateServerAddress, probeServer } from "@/src/utils/api";
 import { deviceHasInternet, type NetFailureKind } from "@/src/utils/net-diagnostics";
 
 export type NetworkStatus =
+  /** First probe still running — never show an outage banner yet. */
+  | "connecting"
   | "online"
   | "device-offline"
   | "server-down"
   | "no-server-url";
 
 interface NetworkState {
-  /** Back-compatible flag: false for ANY non-online status. */
+  /** Back-compatible flag: false only for a CONFIRMED outage. */
   isOnline: boolean;
   /** Precise reason, so the UI can show honest copy. */
   status: NetworkStatus;
-  /** Backend address baked into this build ("" when missing). */
+  /** Server address currently in use ("" when the build has none). */
   baseUrl: string;
-  /** Force an immediate re-probe. */
-  retry: () => Promise<void>;
-  /**
-   * API layer calls this on a fetch/network failure. `kind` carries what the
-   * transport already worked out, so we never have to guess.
-   */
+  /** True once the backend has answered at least once this session. */
+  ready: boolean;
+  /** Force an immediate re-probe (also re-tries every candidate address). */
+  retry: () => Promise<boolean>;
+  /** Transport layer reports a fully exhausted request. */
   reportFailure: (kind?: NetFailureKind) => void;
-  /** API layer calls this after any successful response to recover. */
+  /** Transport layer reports any successful response. */
   reportSuccess: () => void;
 }
 
 const NetworkContext = createContext<NetworkState | null>(null);
 
 /**
- * How many exhausted requests/probes must fail before the app declares an
- * outage. `api.ts` already retries every idempotent call three times with
- * backoff before it reports once, so two reports mean the connection is
- * genuinely gone — not a single dropped packet during a Wi-Fi hand-off.
+ * How many exhausted requests must fail before declaring an outage. The
+ * transport already retries every idempotent call three times across every
+ * candidate address before it reports once, so two reports mean the connection
+ * is genuinely gone — not a single dropped packet.
  */
 const FAILURE_THRESHOLD = 2;
 
-// Cached callable that the api.ts layer imports to report request outcomes
-// without needing React state.
+// Module-level bridge so `src/net/transport` can report outcomes without being
+// a hook consumer. Rebound by the provider on mount.
 let externalReportFailure: (kind?: NetFailureKind) => void = () => {};
 let externalReportSuccess: () => void = () => {};
 export const netTelemetry = {
@@ -79,19 +79,21 @@ export const netTelemetry = {
 export const NetworkProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
-  const [status, setStatus] = useState<NetworkStatus>("online");
+  const [status, setStatus] = useState<NetworkStatus>("connecting");
   const [baseUrl, setBaseUrl] = useState<string>(() => getApiUrl());
-  // Consecutive failures trigger the outage flip — a single 5xx shouldn't.
+  const [ready, setReady] = useState(false);
   const failureRun = useRef(0);
 
   const goOnline = useCallback(() => {
     failureRun.current = 0;
+    setBaseUrl(getApiUrl());
+    setReady(true);
     setStatus("online");
   }, []);
 
   /**
-   * Decide between "device-offline" and "server-down" by asking the OS, so we
-   * never blame the user's connection for a dead/undeployed backend.
+   * Decide between "device offline" and "server unreachable" by asking the OS,
+   * so we never blame the user's connection for a dead backend.
    */
   const classifyOutage = useCallback(async (hint?: NetFailureKind) => {
     if (hint === "no-backend-url") {
@@ -106,50 +108,32 @@ export const NetworkProvider: React.FC<{ children: React.ReactNode }> = ({
     setStatus(online === false ? "device-offline" : "server-down");
   }, []);
 
-  const probe = useCallback(async () => {
-    const url = getApiUrl();
-    setBaseUrl(url);
-    if (!url && Platform.OS !== "web") {
-      // A native build with no server address can never recover by retrying —
-      // report it as a build/publish problem instead of a flaky network.
+  /** Probe every candidate address; the first that answers wins. */
+  const probe = useCallback(async (): Promise<boolean> => {
+    const result = await probeServer(12000);
+    setBaseUrl(getApiUrl());
+    if (result.ok) {
+      goOnline();
+      return true;
+    }
+    if (!result.baseUrl) {
       setStatus("no-server-url");
-      return;
+      return false;
     }
-    // `/api/health` is unauthenticated, so reachability is measured without
-    // depending on a valid session.
-    const targetUrl = url ? `${url}/api/health` : "/api/health";
-    try {
-      // Small race-safe timeout so an unreachable host doesn't hang forever (12s for mobile latency).
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 12000);
-      const res = await fetch(targetUrl, {
-        method: "GET",
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
-      // Any HTTP answer (even 401/404) proves the host is reachable.
-      if (res.status >= 200 && res.status < 500) {
-        goOnline();
-      } else {
-        failureRun.current += 1;
-        if (failureRun.current >= FAILURE_THRESHOLD) await classifyOutage();
-      }
-    } catch {
-      failureRun.current += 1;
-      if (failureRun.current >= FAILURE_THRESHOLD) await classifyOutage();
-    }
-  }, [classifyOutage, goOnline]);
+    failureRun.current += 1;
+    if (failureRun.current >= FAILURE_THRESHOLD || !ready) await classifyOutage();
+    return false;
+  }, [classifyOutage, goOnline, ready]);
 
   const reportFailure = useCallback(
     (kind?: NetFailureKind) => {
       setBaseUrl(getApiUrl());
-      // A missing server address is deterministic, not flaky: surface at once.
+      // A missing address is deterministic, not flaky — surface it at once.
       if (kind === "no-backend-url") {
         setStatus("no-server-url");
         return;
       }
       failureRun.current += 1;
-      // Three back-to-back failures = confidently in an outage.
       if (failureRun.current >= FAILURE_THRESHOLD) void classifyOutage(kind);
     },
     [classifyOutage],
@@ -159,7 +143,7 @@ export const NetworkProvider: React.FC<{ children: React.ReactNode }> = ({
     goOnline();
   }, [goOnline]);
 
-  // Wire the module-level bridge so api.ts can call in without a hook.
+  // Wire the module bridge so the transport can call in without a hook.
   useEffect(() => {
     externalReportFailure = reportFailure;
     externalReportSuccess = reportSuccess;
@@ -169,15 +153,36 @@ export const NetworkProvider: React.FC<{ children: React.ReactNode }> = ({
     };
   }, [reportFailure, reportSuccess]);
 
-  // Web: subscribe to navigator.online / offline
+  // BOOTSTRAP: load the saved address, then probe once before anything else
+  // starts making requests.
+  useEffect(() => {
+    let cancelled = false;
+    const boot = async () => {
+      await hydrateServerAddress();
+      if (cancelled) return;
+      setBaseUrl(getApiUrl());
+      await probe();
+    };
+    void boot();
+    return () => {
+      cancelled = true;
+    };
+    // Intentionally runs once: `probe` is stable enough and re-running the
+    // bootstrap on every identity change would re-probe needlessly.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Web: subscribe to navigator online/offline.
   useEffect(() => {
     if (Platform.OS !== "web" || typeof window === "undefined") return;
-    // Deferred so the very first render is never mutated mid-commit.
     const initial = setTimeout(() => {
       if (navigator.onLine === false) setStatus("device-offline");
     }, 0);
     const onOffline = () => setStatus("device-offline");
-    const onOnline = () => goOnline();
+    const onOnline = () => {
+      failureRun.current = 0;
+      void probe();
+    };
     window.addEventListener("offline", onOffline);
     window.addEventListener("online", onOnline);
     return () => {
@@ -185,11 +190,11 @@ export const NetworkProvider: React.FC<{ children: React.ReactNode }> = ({
       window.removeEventListener("offline", onOffline);
       window.removeEventListener("online", onOnline);
     };
-  }, [goOnline]);
+  }, [probe]);
 
   // Native: react to real radio changes immediately instead of waiting for
-  // three failed requests. Airplane mode / lost Wi-Fi is then reported as a
-  // device problem, and regaining a link clears the banner right away.
+  // requests to fail. Airplane mode / lost Wi-Fi is then reported as a device
+  // problem, and regaining a link re-probes at once.
   useEffect(() => {
     if (Platform.OS === "web") return;
     let sub: { remove: () => void } | undefined;
@@ -201,35 +206,33 @@ export const NetworkProvider: React.FC<{ children: React.ReactNode }> = ({
           setStatus("device-offline");
           return;
         }
-        // Link is back: clear a device-offline banner and re-check the server.
         failureRun.current = 0;
-        setStatus((prev) => (prev === "device-offline" ? "online" : prev));
         void probe();
       });
     } catch {
-      // Listener unsupported on this platform build — polling still recovers.
+      // Listener unsupported on this build — the 5s poll still recovers.
     }
     return () => sub?.remove();
   }, [probe]);
 
   // While in an outage, poll every 5s to recover quickly. A build with no
-  // server address is excluded: retrying cannot fix a missing URL.
+  // address at all is excluded: retrying cannot invent a server.
   useEffect(() => {
-    if (status === "online" || status === "no-server-url") return;
-    const id = setInterval(probe, 5000);
+    if (status === "online" || status === "connecting" || status === "no-server-url") return;
+    const id = setInterval(() => void probe(), 5000);
     return () => clearInterval(id);
   }, [status, probe]);
 
-  const retry = useCallback(async () => {
-    await probe();
-  }, [probe]);
+  const retry = useCallback(async () => probe(), [probe]);
 
   return (
     <NetworkContext.Provider
       value={{
-        isOnline: status === "online",
+        // "connecting" must not paint the app as offline during boot.
+        isOnline: status === "online" || status === "connecting",
         status,
         baseUrl,
+        ready,
         retry,
         reportFailure,
         reportSuccess,
