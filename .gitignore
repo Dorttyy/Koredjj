@@ -95,3 +95,6 @@ frontend/.metro-cache/
 
 # QA/test accounts are for the testing agents only — never part of a deploy artifact
 memory/test_credentials.md
+.env
+.env.*
+*.env
